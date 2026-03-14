@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
 from PyInstaller.utils.hooks import collect_all
 
 datas = []
@@ -43,3 +44,11 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        exe,
+        name='Editorial.app',
+        icon=None,
+        bundle_identifier='com.foolishdesigns.editorial',
+    )

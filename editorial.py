@@ -1285,7 +1285,7 @@ class EditorialApp:
                 self._density.create_rectangle(x, y1, x + yellow_w, y2, fill=YELLOW_FG, outline="")
                 x += yellow_w
             if purple_w > 0:
-                self._density.create_rectangle(x, y1, x + purple_w, y2, fill=PURPLE_FG, outline="")
+                self._density.create_rectangle(x, y1, x + purple_w, y2, fill=PURPLE_BG, outline="")
 
     def _redraw_lineno(self, *_args) -> None:
         """Repaint the line-number gutter to match the current scroll position."""

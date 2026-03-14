@@ -20,6 +20,8 @@ from __future__ import annotations
 import os
 import threading
 import math
+import re
+from collections import Counter
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
@@ -100,12 +102,16 @@ class EditorialApp:
         self._layout_refresh_job: str | None = None
         self._cache_build_seq: int = 0
         self._skip_filter_schedule_once: bool = False
+        self._ui_lock_count: int = 0
+        self._ui_menu_locked: bool = False
+        self._ui_locked_controls: list[tuple[tk.Widget, str]] = []
         self._find_dialog: tk.Toplevel | None = None
         self._find_var = tk.StringVar()
         self._replace_var = tk.StringVar()
         self._last_find_term = ""
         self._find_index = "1.0"
         self._pov_choice = tk.StringVar(value="All Pronouns (Broad Scan)")
+        self._pov_names_var = tk.StringVar()
 
         self._build_menu()
         self._build_toolbar()
@@ -170,6 +176,8 @@ class EditorialApp:
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
 
+        self._menus: list[tk.Menu] = [fm, em, vm, tm]
+
         self.root.config(menu=bar)
 
     # --------------------------------------------------------------- toolbar
@@ -206,6 +214,45 @@ class EditorialApp:
         )
         self._pov_combo.pack(side=tk.LEFT, padx=(0, 6))
         self._pov_combo.bind("<<ComboboxSelected>>", self._on_pov_changed)
+
+        tk.Label(
+            self._toolbar,
+            text="POV Names:",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(10, 6))
+
+        self._pov_names_entry = tk.Entry(
+            self._toolbar,
+            textvariable=self._pov_names_var,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=ACCENT,
+            relief="flat",
+            font=("Segoe UI", 9),
+            width=34,
+        )
+        self._pov_names_entry.pack(side=tk.LEFT, padx=(0, 6))
+        self._pov_names_entry.bind("<KeyRelease>", self._on_pov_names_changed)
+        self._pov_names_entry.bind("<FocusOut>", self._on_pov_names_changed)
+
+        self._ngram_btn = tk.Button(
+            self._toolbar,
+            text="N-gram Scan",
+            command=self.run_ngram_scan,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=5,
+            cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self._ngram_btn.pack(side=tk.LEFT, padx=(6, 0))
 
         # Color-level controls (right-aligned, visible only when filter is ON)
         self._legend = tk.Frame(self._toolbar, bg=BG_SURFACE)
@@ -250,6 +297,7 @@ class EditorialApp:
     def _build_editor(self) -> None:
         container = tk.Frame(self.root, bg=BG)
         container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._editor_container = container
 
         self._editor_font = tkfont.Font(family="Consolas", size=13)
 
@@ -259,6 +307,51 @@ class EditorialApp:
             activebackground=ACCENT, width=12, relief="flat", bd=0,
         )
         self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Right analysis panel (shown on demand)
+        self._analysis_panel = tk.Frame(container, bg=BG_SURFACE, width=320)
+        self._analysis_title = tk.Label(
+            self._analysis_panel,
+            text="Overused Combinations",
+            bg=BG_SURFACE,
+            fg=TEXT,
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+            padx=10,
+            pady=8,
+        )
+        self._analysis_title.pack(fill=tk.X)
+        self._analysis_close = tk.Button(
+            self._analysis_panel,
+            text="Close",
+            command=self._hide_analysis_panel,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self._analysis_close.pack(anchor="e", padx=8, pady=(0, 4))
+        self._analysis_text = tk.Text(
+            self._analysis_panel,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=ACCENT,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=10,
+            wrap=tk.WORD,
+            state="disabled",
+            font=("Consolas", 10),
+        )
+        self._analysis_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self._analysis_visible = False
 
         # Line-number canvas
         self._density = tk.Canvas(
@@ -315,6 +408,18 @@ class EditorialApp:
 
         # Defer first line-number draw until widget is fully rendered
         self.root.after(120, self._redraw_lineno)
+
+    def _show_analysis_panel(self) -> None:
+        if self._analysis_visible:
+            return
+        self._analysis_panel.pack(side=tk.RIGHT, fill=tk.Y, before=self._scrollbar)
+        self._analysis_visible = True
+
+    def _hide_analysis_panel(self) -> None:
+        if not self._analysis_visible:
+            return
+        self._analysis_panel.pack_forget()
+        self._analysis_visible = False
 
     # ----------------------------------------------------------- status bar
 
@@ -438,9 +543,10 @@ class EditorialApp:
             return
         text = self.text.get("1.0", "end-1c")
         active_pov = list(self._get_active_pov_pronouns())
+        pov_names = self._get_active_pov_names()
 
         def task():
-            ranges = self._compute_export_ranges(text, active_pov)
+            ranges = self._compute_export_ranges(text, active_pov, pov_names)
             rtf = self._build_rtf_export(text, ranges)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(rtf)
@@ -456,9 +562,10 @@ class EditorialApp:
             return
         text = self.text.get("1.0", "end-1c")
         active_pov = list(self._get_active_pov_pronouns())
+        pov_names = self._get_active_pov_names()
 
         def task():
-            ranges = self._compute_export_ranges(text, active_pov)
+            ranges = self._compute_export_ranges(text, active_pov, pov_names)
             tagged = self._build_tagged_export(text, ranges)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
@@ -466,6 +573,7 @@ class EditorialApp:
         self._run_task_with_progress("Exporting tagged text...", task, "Tagged text export complete.")
 
     def _run_task_with_progress(self, title: str, task, success_message: str) -> None:
+        self._acquire_ui_lock()
         dlg = tk.Toplevel(self.root)
         dlg.title(title)
         dlg.transient(self.root)
@@ -487,6 +595,7 @@ class EditorialApp:
                 dlg.destroy()
             except Exception:
                 pass
+            self._release_ui_lock()
             if error is not None:
                 messagebox.showerror("Export Error", str(error))
             else:
@@ -501,6 +610,114 @@ class EditorialApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def run_ngram_scan(self) -> None:
+        if self._ui_lock_count > 0:
+            return
+
+        text = self.text.get("1.0", "end-1c")
+        if not text.strip():
+            messagebox.showinfo("N-gram Scan", "No text to analyze.")
+            return
+
+        self._acquire_ui_lock()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Scanning Overused Combinations")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.configure(bg=BG_SURFACE)
+        dlg.grab_set()
+
+        panel = tk.Frame(dlg, bg=BG_SURFACE, padx=14, pady=12)
+        panel.pack(fill=tk.BOTH, expand=True)
+        tk.Label(panel, text="Analyzing text...", bg=BG_SURFACE, fg=TEXT, font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        pct_var = tk.StringVar(value="0%")
+        tk.Label(panel, textvariable=pct_var, bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 6))
+        pb = ttk.Progressbar(panel, mode="determinate", maximum=100, length=300)
+        pb.pack(fill=tk.X)
+
+        token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+        def set_progress(val: int) -> None:
+            p = max(0, min(100, int(val)))
+            pb["value"] = p
+            pct_var.set(f"{p}%")
+
+        def render_results(result: dict[str, list[tuple[str, int]]]) -> None:
+            lines: list[str] = []
+            sections = [
+                ("Top Single Words", result["single"]),
+                ("Top Word Pairs", result["pairs"]),
+                ("Top Word Triples", result["triples"]),
+            ]
+            for title, items in sections:
+                lines.append(title)
+                lines.append("-" * len(title))
+                if not items:
+                    lines.append("(none)")
+                else:
+                    for gram, count in items:
+                        lines.append(f"{gram}  ({count})")
+                lines.append("")
+
+            self._analysis_text.config(state="normal")
+            self._analysis_text.delete("1.0", tk.END)
+            self._analysis_text.insert("1.0", "\n".join(lines).rstrip() + "\n")
+            self._analysis_text.config(state="disabled")
+            self._show_analysis_panel()
+
+        def finish(error: Exception | None, result: dict[str, list[tuple[str, int]]] | None) -> None:
+            try:
+                dlg.grab_release()
+                dlg.destroy()
+            except Exception:
+                pass
+            self._release_ui_lock()
+            if error is not None:
+                messagebox.showerror("N-gram Scan", str(error))
+                return
+            if result is not None:
+                render_results(result)
+
+        def worker() -> None:
+            try:
+                tokens = [m.group(0) for m in token_re.finditer(text.lower())]
+                total = len(tokens)
+                if total == 0:
+                    self.root.after(0, lambda: finish(None, {"single": [], "pairs": [], "triples": []}))
+                    return
+
+                uni: Counter[str] = Counter()
+                bi: Counter[tuple[str, str]] = Counter()
+                tri: Counter[tuple[str, str, str]] = Counter()
+
+                self.root.after(0, lambda: set_progress(3))
+                chunk = 2000
+                for i, tok in enumerate(tokens):
+                    uni[tok] += 1
+                    if i + 1 < total:
+                        bi[(tok, tokens[i + 1])] += 1
+                    if i + 2 < total:
+                        tri[(tok, tokens[i + 1], tokens[i + 2])] += 1
+                    if i % chunk == 0:
+                        pct = 3 + int((i / total) * 90)
+                        self.root.after(0, lambda p=pct: set_progress(p))
+
+                top_single = [(w, c) for w, c in uni.most_common(5)]
+                top_pairs = [(" ".join(k), c) for k, c in bi.most_common(5)]
+                top_triples = [(" ".join(k), c) for k, c in tri.most_common(5)]
+
+                result = {
+                    "single": top_single,
+                    "pairs": top_pairs,
+                    "triples": top_triples,
+                }
+                self.root.after(0, lambda: set_progress(100))
+                self.root.after(0, lambda: finish(None, result))
+            except Exception as exc:
+                self.root.after(0, lambda: finish(exc, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _get_cached_export_ranges(self) -> list[tuple[int, int, str]] | None:
         if not (self.filter_active and any(self._filter_hits.values())):
             return None
@@ -512,8 +729,17 @@ class EditorialApp:
                 ranges.append((ws, we, level))
         return sorted(ranges, key=lambda x: x[0])
 
-    def _compute_export_ranges(self, text: str, active_pov: list[str]) -> list[tuple[int, int, str]]:
-        hits = analyze_filter_words(text, active_pov_pronouns=active_pov)
+    def _compute_export_ranges(
+        self,
+        text: str,
+        active_pov: list[str],
+        pov_names: set[str] | None = None,
+    ) -> list[tuple[int, int, str]]:
+        hits = analyze_filter_words(
+            text,
+            pov_character_names=pov_names,
+            active_pov_pronouns=active_pov,
+        )
         hits.extend((start, end, "purple") for start, end in find_quote_issues(text))
         ranges = [(ws, we, cls) for ws, we, cls in hits if cls in self._enabled_filter_levels]
         return sorted(ranges, key=lambda x: x[0])
@@ -847,6 +1073,7 @@ class EditorialApp:
         if not ranges:
             return
 
+        self._acquire_ui_lock()
         self._filter_processing = True
         self._needs_cache_rebuild = False
         self._apply_ranges_progressive(level, ranges, add_mode, self._finish_filter_processing)
@@ -869,9 +1096,84 @@ class EditorialApp:
             self._update_filter_btn()
         self._update_level_buttons()
         self._request_density_redraw()
+        self._release_ui_lock()
         if self._filter_rerun_requested and self.filter_active:
             self._filter_rerun_requested = False
             self._run_filter()
+
+    def _acquire_ui_lock(self) -> None:
+        self._ui_lock_count += 1
+        if self._ui_lock_count > 1:
+            return
+
+        self._ui_locked_controls.clear()
+        controls: list[tk.Widget] = [
+            self._filter_btn,
+            self._pov_combo,
+            self._pov_names_entry,
+            self._ngram_btn,
+            self._red_btn,
+            self._yellow_btn,
+            self._purple_btn,
+            self._analysis_close,
+        ]
+        for widget in controls:
+            try:
+                state = str(widget.cget("state"))
+                self._ui_locked_controls.append((widget, state))
+                widget.config(state="disabled")
+            except Exception:
+                continue
+
+        try:
+            self.text.config(state="disabled")
+        except Exception:
+            pass
+
+        if not self._ui_menu_locked:
+            for menu in getattr(self, "_menus", []):
+                try:
+                    end = menu.index("end")
+                    if end is None:
+                        continue
+                    for idx in range(end + 1):
+                        menu.entryconfig(idx, state="disabled")
+                except Exception:
+                    continue
+            self._ui_menu_locked = True
+
+    def _release_ui_lock(self) -> None:
+        if self._ui_lock_count <= 0:
+            self._ui_lock_count = 0
+            return
+
+        self._ui_lock_count -= 1
+        if self._ui_lock_count > 0:
+            return
+
+        for widget, state in self._ui_locked_controls:
+            try:
+                widget.config(state=state)
+            except Exception:
+                continue
+        self._ui_locked_controls.clear()
+
+        try:
+            self.text.config(state="normal")
+        except Exception:
+            pass
+
+        if self._ui_menu_locked:
+            for menu in getattr(self, "_menus", []):
+                try:
+                    end = menu.index("end")
+                    if end is None:
+                        continue
+                    for idx in range(end + 1):
+                        menu.entryconfig(idx, state="normal")
+                except Exception:
+                    continue
+            self._ui_menu_locked = False
 
     def _apply_ranges_progressive(
         self,
@@ -949,6 +1251,7 @@ class EditorialApp:
             self._filter_rerun_requested = True
             return
 
+        self._acquire_ui_lock()
         self._filter_processing = True
         self._analysis_in_progress = True
         self._needs_cache_rebuild = True
@@ -959,8 +1262,9 @@ class EditorialApp:
         self._clear_filter()
         content = self.text.get("1.0", tk.END)
         active_pov = self._get_active_pov_pronouns()
+        pov_names = self._get_active_pov_names()
         self._start_progress_pulse()
-        self._start_filter_analysis_async(run_id, content, active_pov)
+        self._start_filter_analysis_async(run_id, content, active_pov, pov_names)
 
     def _start_progress_pulse(self) -> None:
         if self._progress_pulse_job is not None:
@@ -980,10 +1284,20 @@ class EditorialApp:
 
         self._progress_pulse_job = self.root.after(80, tick)
 
-    def _start_filter_analysis_async(self, run_id: int, content: str, active_pov: list[str]) -> None:
+    def _start_filter_analysis_async(
+        self,
+        run_id: int,
+        content: str,
+        active_pov: list[str],
+        pov_names: set[str],
+    ) -> None:
         def worker() -> None:
             try:
-                raw_hits = analyze_filter_words(content, active_pov_pronouns=active_pov)
+                raw_hits = analyze_filter_words(
+                    content,
+                    pov_character_names=pov_names,
+                    active_pov_pronouns=active_pov,
+                )
                 raw_hits.extend((start, end, "purple") for start, end in find_quote_issues(content))
                 grouped: dict[str, list[tuple[int, int]]] = {"red": [], "yellow": [], "purple": []}
                 for ws, we, cls in raw_hits:
@@ -1015,6 +1329,7 @@ class EditorialApp:
             self._hide_density_band()
             self._update_filter_btn()
             self._lbl_filter.config(text="")
+            self._release_ui_lock()
             messagebox.showerror("Filter Analyzer Error", str(error))
             return
 
@@ -1118,7 +1433,17 @@ class EditorialApp:
     def _get_active_pov_pronouns(self) -> list[str]:
         return POV_PRONOUN_MAP.get(self._pov_choice.get(), POV_PRONOUN_MAP["All Pronouns (Broad Scan)"])
 
+    def _get_active_pov_names(self) -> set[str]:
+        raw = self._pov_names_var.get().strip()
+        if not raw:
+            return set()
+        return {name.strip() for name in raw.split(",") if name.strip()}
+
     def _on_pov_changed(self, _event=None) -> None:
+        if self.filter_active:
+            self._schedule_filter()
+
+    def _on_pov_names_changed(self, _event=None) -> None:
         if self.filter_active:
             self._schedule_filter()
 

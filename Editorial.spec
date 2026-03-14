@@ -1,16 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all
 
-datas = [('filter_analyzer.py', '.')]
-datas += collect_data_files('en_core_web_sm')
+datas = []
+binaries = []
+hiddenimports = []
+tmp_ret = collect_all('en_core_web_sm')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['editorial.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
-    hiddenimports=['en_core_web_sm'],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -12,22 +12,30 @@ Features
 * Word & character count
 * Filter Words mode (toggle)  — highlights analysis results by context:
     Red    = obvious filter word in narration (POV subject present)
-    Yellow = questionable (filter word in narration, context unclear)
-    Purple = likely damaged quote / missing quote closer
+    Yellow = likely damaged quote / missing quote closer
 """
 
 from __future__ import annotations
+import json
 import os
 import threading
 import math
 import re
+import ctypes
 from collections import Counter
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
 from tkinter import ttk
+from spacy.lang.en.stop_words import STOP_WORDS
 
 from filter_analyzer import analyze_filter_words, find_quote_issues
+
+APP_NAME = "Editorial"
+APP_VERSION = "1.0.0"
+COMPANY_NAME = "Foolish Designs"
+CREATOR_NAME = "John Bowden"
+SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
 
 # ---------------------------------------------------------------------------
 # Colour palette  (Catppuccin Mocha-inspired dark theme)
@@ -42,12 +50,10 @@ ACCENT      = "#89b4fa"   # blue accent (cursor, scrollbar)
 # Filter highlight colours
 RED_FG    = "#f38ba8"
 RED_BG    = "#3d1520"
-YELLOW_FG = "#f9e2af"
-YELLOW_BG = "#3d3210"
 GREEN_FG  = "#a6e3a1"
 GREEN_BG  = "#1a2e1e"
 PURPLE_FG = "#1e1e2e"
-PURPLE_BG = "#f5a6ff"
+PURPLE_BG = "#f9e2af"
 FIND_BG   = "#45475a"
 
 POV_PRONOUN_MAP: dict[str, list[str]] = {
@@ -68,27 +74,22 @@ class EditorialApp:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Editorial")
+        self.root.title(APP_NAME)
         self.root.geometry("1280x820")
         self.root.minsize(800, 520)
         self.root.configure(bg=BG)
 
         self.current_file: str | None = None
         self.filter_active: bool = False
-        self._filter_job: str | None = None   # after() handle for debounce
         self._filter_processing: bool = False
-        self._filter_rerun_requested: bool = False
+        self._filter_update_needed: bool = False
         self._filter_hits: dict[str, list[tuple[int, int]]] = {
-            "red": [], "yellow": [], "purple": []
+            "red": [], "purple": []
         }
-        self._enabled_filter_levels: set[str] = {"red", "yellow", "purple"}
         self._density_visible: bool = False
-        self._filter_hits_lines: dict[str, list[int]] = {
-            "red": [], "yellow": [], "purple": []
-        }
-        self._filter_hit_fracs: dict[str, list[float]] = {
-            "red": [], "yellow": [], "purple": []
-        }
+        self._quote_band_visible: bool = False
+        self._filter_hits_lines: dict[str, list[int]] = {"red": [], "purple": []}
+        self._filter_hit_fracs: dict[str, list[float]] = {"red": [], "purple": []}
         self._filter_run_seq: int = 0
         self._analysis_in_progress: bool = False
         self._progress_pulse_job: str | None = None
@@ -100,6 +101,8 @@ class EditorialApp:
         self._density_viewport_pending: bool = False
         self._density_draw_pending: bool = False
         self._layout_refresh_job: str | None = None
+        self._resize_settle_job: str | None = None
+        self._resize_in_progress: bool = False
         self._cache_build_seq: int = 0
         self._skip_filter_schedule_once: bool = False
         self._ui_lock_count: int = 0
@@ -112,12 +115,17 @@ class EditorialApp:
         self._find_index = "1.0"
         self._pov_choice = tk.StringVar(value="All Pronouns (Broad Scan)")
         self._pov_names_var = tk.StringVar()
+        self._pov_names_dialog: tk.Toplevel | None = None
+        self._pov_names_edit_var = tk.StringVar()
+        self._settings_path = self._get_settings_path()
+        self._load_user_settings()
 
         self._build_menu()
         self._build_toolbar()
-        self._build_editor()
         self._build_statusbar()
+        self._build_editor()
         self._bind_shortcuts()
+        self.root.bind("<Configure>", self._on_root_configure)
         self._update_status()
 
     # ------------------------------------------------------------------ menu
@@ -135,8 +143,10 @@ class EditorialApp:
         fm.add_command(label="Save",      command=self.save_file,    accelerator="Ctrl+S")
         fm.add_command(label="Save As…",  command=self.save_file_as, accelerator="Ctrl+Shift+S")
         fm.add_separator()
-        fm.add_command(label="Export Highlighted RTF…", command=self.export_highlighted_rtf)
-        fm.add_command(label="Export Tagged Text…", command=self.export_tagged_text)
+        exm = tk.Menu(fm, **cfg)
+        exm.add_command(label="Highlighted RTF…", command=self.export_highlighted_rtf)
+        exm.add_command(label="Tagged Text…", command=self.export_tagged_text)
+        fm.add_cascade(label="Export", menu=exm)
         fm.add_separator()
         fm.add_command(label="Exit",      command=self.quit_app)
         bar.add_cascade(label="File", menu=fm)
@@ -160,9 +170,13 @@ class EditorialApp:
         # View ---------------------------------------------------------------
         vm = tk.Menu(bar, **cfg)
         self._show_lines_var = tk.BooleanVar(value=True)
+        self._indent_first_line_var = tk.BooleanVar(value=True)
         vm.add_checkbutton(label="Line Numbers",
                            variable=self._show_lines_var,
                            command=self._toggle_line_numbers)
+        vm.add_checkbutton(label="Indent First Line",
+                   variable=self._indent_first_line_var,
+                   command=self._toggle_first_line_indent)
         vm.add_separator()
         vm.add_command(label="Zoom In",  command=self._zoom_in,  accelerator="Ctrl+=")
         vm.add_command(label="Zoom Out", command=self._zoom_out, accelerator="Ctrl+-")
@@ -172,11 +186,17 @@ class EditorialApp:
         tm = tk.Menu(bar, **cfg)
         tm.add_command(label="Toggle Filter Words",
                        command=self.toggle_filter, accelerator="Ctrl+Shift+F")
+        tm.add_command(label="POV Names…", command=self.show_pov_names_dialog)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
 
-        self._menus: list[tk.Menu] = [fm, em, vm, tm]
+        # Help ---------------------------------------------------------------
+        hm = tk.Menu(bar, **cfg)
+        hm.add_command(label="About Editorial", command=self.show_about_dialog)
+        bar.add_cascade(label="Help", menu=hm)
+
+        self._menus: list[tk.Menu] = [fm, em, vm, tm, hm]
 
         self.root.config(menu=bar)
 
@@ -215,28 +235,6 @@ class EditorialApp:
         self._pov_combo.pack(side=tk.LEFT, padx=(0, 6))
         self._pov_combo.bind("<<ComboboxSelected>>", self._on_pov_changed)
 
-        tk.Label(
-            self._toolbar,
-            text="POV Names:",
-            bg=BG_SURFACE,
-            fg=TEXT_SUBTLE,
-            font=("Segoe UI", 9),
-        ).pack(side=tk.LEFT, padx=(10, 6))
-
-        self._pov_names_entry = tk.Entry(
-            self._toolbar,
-            textvariable=self._pov_names_var,
-            bg=BG,
-            fg=TEXT,
-            insertbackground=ACCENT,
-            relief="flat",
-            font=("Segoe UI", 9),
-            width=34,
-        )
-        self._pov_names_entry.pack(side=tk.LEFT, padx=(0, 6))
-        self._pov_names_entry.bind("<KeyRelease>", self._on_pov_names_changed)
-        self._pov_names_entry.bind("<FocusOut>", self._on_pov_names_changed)
-
         self._ngram_btn = tk.Button(
             self._toolbar,
             text="N-gram Scan",
@@ -252,45 +250,23 @@ class EditorialApp:
             cursor="hand2",
             font=("Segoe UI", 9, "bold"),
         )
-        self._ngram_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self._ngram_btn.pack(side=tk.RIGHT, padx=(6, 8))
 
-        # Color-level controls (right-aligned, visible only when filter is ON)
-        self._legend = tk.Frame(self._toolbar, bg=BG_SURFACE)
-
-        bkw = dict(
-            activebackground=BG_OVERLAY,
-            activeforeground=TEXT,
+        self._filter_refresh_btn = tk.Button(
+            self._toolbar,
+            text="Update",
+            command=self._on_filter_refresh_clicked,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
             relief="flat",
             bd=0,
-            padx=8,
-            pady=3,
+            padx=10,
+            pady=5,
             cursor="hand2",
             font=("Segoe UI", 9, "bold"),
         )
-
-        self._red_btn = tk.Button(
-            self._legend,
-            text="\u25cf Obvious",
-            command=lambda: self._toggle_filter_level("red"),
-            **bkw,
-        )
-        self._yellow_btn = tk.Button(
-            self._legend,
-            text="\u25cf Questionable",
-            command=lambda: self._toggle_filter_level("yellow"),
-            **bkw,
-        )
-        self._purple_btn = tk.Button(
-            self._legend,
-            text="\u25cf Quote Errors",
-            command=lambda: self._toggle_filter_level("purple"),
-            **bkw,
-        )
-
-        self._red_btn.pack(side=tk.LEFT, padx=2)
-        self._yellow_btn.pack(side=tk.LEFT, padx=2)
-        self._purple_btn.pack(side=tk.LEFT, padx=2)
-        self._update_level_buttons()
 
     # --------------------------------------------------------------- editor
 
@@ -309,7 +285,8 @@ class EditorialApp:
         self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Right analysis panel (shown on demand)
-        self._analysis_panel = tk.Frame(container, bg=BG_SURFACE, width=320)
+        self._analysis_panel = tk.Frame(container, bg=BG_SURFACE, width=380)
+        self._analysis_panel.pack_propagate(False)
         self._analysis_title = tk.Label(
             self._analysis_panel,
             text="Overused Combinations",
@@ -337,23 +314,94 @@ class EditorialApp:
             font=("Segoe UI", 9, "bold"),
         )
         self._analysis_close.pack(anchor="e", padx=8, pady=(0, 4))
-        self._analysis_text = tk.Text(
-            self._analysis_panel,
-            bg=BG,
-            fg=TEXT,
-            insertbackground=ACCENT,
-            relief="flat",
-            bd=0,
-            padx=10,
-            pady=10,
-            wrap=tk.WORD,
-            state="disabled",
-            font=("Consolas", 10),
+
+        self._ngram_style = ttk.Style(self.root)
+        try:
+            if self._ngram_style.theme_use() != "clam":
+                self._ngram_style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self._ngram_style.configure(
+            "Ngram.Treeview",
+            background=BG,
+            fieldbackground=BG,
+            foreground=TEXT,
+            rowheight=22,
+            borderwidth=0,
+            font=("Segoe UI", 9),
         )
-        self._analysis_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self._ngram_style.configure(
+            "Ngram.Treeview.Heading",
+            background=BG_OVERLAY,
+            foreground=TEXT,
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self._ngram_style.map(
+            "Ngram.Treeview",
+            background=[("selected", ACCENT)],
+            foreground=[("selected", BG)],
+        )
+
+        self._analysis_tables_host = tk.Frame(self._analysis_panel, bg=BG_SURFACE)
+        self._analysis_tables_host.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        def make_section(title: str) -> ttk.Treeview:
+            frame = tk.LabelFrame(
+                self._analysis_tables_host,
+                text=title,
+                bg=BG_SURFACE,
+                fg=TEXT,
+                padx=6,
+                pady=6,
+                font=("Segoe UI", 9, "bold"),
+                relief="groove",
+                bd=1,
+            )
+            frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+            tree = ttk.Treeview(
+                frame,
+                columns=("gram", "count"),
+                show="",
+                style="Ngram.Treeview",
+                selectmode="browse",
+                height=5,
+            )
+            tree.column("gram", width=240, anchor="w", stretch=True)
+            tree.column("count", width=80, anchor="e", stretch=False)
+
+            header = tk.Frame(frame, bg=BG_OVERLAY)
+            header.pack(fill=tk.X, pady=(0, 4))
+            tk.Label(
+                header,
+                text="Phrase",
+                bg=BG_OVERLAY,
+                fg=TEXT,
+                font=("Segoe UI", 9, "bold"),
+                anchor="w",
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0), pady=4)
+            tk.Label(
+                header,
+                text="Count",
+                bg=BG_OVERLAY,
+                fg=TEXT,
+                font=("Segoe UI", 9, "bold"),
+                anchor="e",
+                width=8,
+            ).pack(side=tk.RIGHT, padx=(0, 6), pady=4)
+
+            yscroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=yscroll.set)
+            yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            return tree
+
+        self._single_tree = make_section("Top Single Words")
+        self._pairs_tree = make_section("Top Word Pairs")
+        self._triples_tree = make_section("Top Word Triples")
         self._analysis_visible = False
 
-        # Line-number canvas
+        # Density mini-map canvas (red filter hits)
         self._density = tk.Canvas(
             container, bg=BG_SURFACE, width=28, highlightthickness=0,
             cursor="hand2",
@@ -361,6 +409,15 @@ class EditorialApp:
         self._density.bind("<Button-1>", self._on_density_click)
         self._density.bind("<B1-Motion>", self._on_density_click)
         self._density.bind("<Configure>", self._on_density_configure)
+
+        # Quote-warning dot band (yellow dots)
+        self._quote_dots = tk.Canvas(
+            container, bg=BG_SURFACE, width=12, highlightthickness=0,
+            cursor="hand2",
+        )
+        self._quote_dots.bind("<Button-1>", self._on_quote_band_click)
+        self._quote_dots.bind("<B1-Motion>", self._on_quote_band_click)
+        self._quote_dots.bind("<Configure>", self._on_density_configure)
 
         # Line-number canvas
         self._lineno = tk.Canvas(
@@ -389,8 +446,6 @@ class EditorialApp:
         # Tag styles for each filter category
         self.text.tag_configure("filter_red",
                                 background=RED_BG, foreground=RED_FG)
-        self.text.tag_configure("filter_yellow",
-                                background=YELLOW_BG, foreground=YELLOW_FG)
         self.text.tag_configure(
             "filter_purple",
             background=PURPLE_BG,
@@ -399,12 +454,15 @@ class EditorialApp:
         )
         self.text.tag_configure("find_match",
                     background=FIND_BG, foreground=TEXT)
+        self.text.tag_configure("first_line_indent", lmargin1=0, lmargin2=0)
+        self._apply_first_line_indent()
 
         # Event bindings
         self.text.bind("<KeyRelease>",    self._on_key_release)
         self.text.bind("<ButtonRelease>", self._on_cursor_move)
         self.text.bind("<Configure>", self._on_text_configure)
         self.text.bind("<<Copy>>", self._on_copy_event)
+        self.text.bind("<Control-MouseWheel>", self._on_ctrl_mousewheel)
 
         # Defer first line-number draw until widget is fully rendered
         self.root.after(120, self._redraw_lineno)
@@ -421,15 +479,26 @@ class EditorialApp:
         self._analysis_panel.pack_forget()
         self._analysis_visible = False
 
+    def _populate_ngram_table(self, table: ttk.Treeview, items: list[tuple[str, int]]) -> None:
+        table.delete(*table.get_children())
+        if not items:
+            table.insert("", tk.END, values=("(none)", "-"))
+            return
+        for gram, count in items:
+            table.insert("", tk.END, values=(gram, str(count)))
+
     # ----------------------------------------------------------- status bar
 
     def _build_statusbar(self) -> None:
-        bar = tk.Frame(self.root, bg="#11111b", height=26)
+        bar_h = 30
+        bar = tk.Frame(self.root, bg="#11111b", height=bar_h)
         bar.pack(side=tk.BOTTOM, fill=tk.X)
         bar.pack_propagate(False)
+        self._statusbar = bar
+        self._statusbar_h = bar_h
 
         lkw = dict(bg="#11111b", fg=TEXT_SUBTLE, font=("Segoe UI", 9),
-                   padx=10, pady=3)
+                   padx=10, pady=0)
 
         self._lbl_words    = tk.Label(bar, text="Words: 0",   **lkw)
         self._lbl_chars    = tk.Label(bar, text="Chars: 0",   **lkw)
@@ -442,8 +511,16 @@ class EditorialApp:
         self._lbl_words.pack(side=tk.LEFT)
         self._lbl_chars.pack(side=tk.LEFT)
         self._lbl_pos.pack(side=tk.LEFT)
-        self._lbl_filter.pack(side=tk.RIGHT)
-        self._lbl_filename.pack(side=tk.RIGHT)
+        self._lbl_filter.pack(side=tk.LEFT, padx=22)
+        self._lbl_filename.pack(side=tk.LEFT, padx=(8, 0))
+
+        # Reserve a full-height square at the bottom-right for easy resize grip targeting.
+        self._grip_slot = tk.Frame(bar, bg="#11111b", width=bar_h, height=bar_h)
+        self._grip_slot.pack(side=tk.RIGHT, fill=tk.Y)
+        self._grip_slot.pack_propagate(False)
+
+        self._sizegrip = ttk.Sizegrip(self._grip_slot)
+        self._sizegrip.place(relx=1.0, rely=1.0, relwidth=1.0, relheight=1.0, anchor="se")
 
     # ------------------------------------------------------------ shortcuts
 
@@ -481,16 +558,17 @@ class EditorialApp:
         if not self._confirm_discard():
             return
         self.text.delete("1.0", tk.END)
+        self._apply_first_line_indent()
         self.text.edit_reset()
         self.current_file = None
         self._set_title("Untitled")
-        self._update_status()
         if self.filter_active:
             self.filter_active = False
             self._update_filter_btn()
             self._lbl_filter.config(text="")
-            self._legend.pack_forget()
+            self._hide_filter_refresh_button()
             self._hide_density_band()
+            self._hide_quote_band()
 
     def open_file(self) -> None:
         if not self._confirm_discard():
@@ -509,13 +587,15 @@ class EditorialApp:
             return
         self.text.delete("1.0", tk.END)
         self.text.insert("1.0", content)
+        self._apply_first_line_indent()
         self.text.edit_reset()
         self.current_file = path
         self._set_title(os.path.basename(path))
         self._update_status()
         self._redraw_lineno()
         if self.filter_active:
-            self._run_filter()
+            self._clear_filter()
+            self._mark_filter_needs_update()
 
     def save_file(self) -> None:
         if self.current_file:
@@ -637,32 +717,25 @@ class EditorialApp:
 
         token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
+        # Standard NLP practice: remove function/stop words and short fillers
+        # so frequency outputs emphasize semantically meaningful terms.
+        filler_words = {
+            "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
+            "well", "just", "really", "very", "quite", "actually",
+            "basically", "literally", "perhaps", "maybe",
+        }
+        blocked_words = set(STOP_WORDS)
+        blocked_words.update(filler_words)
+
         def set_progress(val: int) -> None:
             p = max(0, min(100, int(val)))
             pb["value"] = p
             pct_var.set(f"{p}%")
 
         def render_results(result: dict[str, list[tuple[str, int]]]) -> None:
-            lines: list[str] = []
-            sections = [
-                ("Top Single Words", result["single"]),
-                ("Top Word Pairs", result["pairs"]),
-                ("Top Word Triples", result["triples"]),
-            ]
-            for title, items in sections:
-                lines.append(title)
-                lines.append("-" * len(title))
-                if not items:
-                    lines.append("(none)")
-                else:
-                    for gram, count in items:
-                        lines.append(f"{gram}  ({count})")
-                lines.append("")
-
-            self._analysis_text.config(state="normal")
-            self._analysis_text.delete("1.0", tk.END)
-            self._analysis_text.insert("1.0", "\n".join(lines).rstrip() + "\n")
-            self._analysis_text.config(state="disabled")
+            self._populate_ngram_table(self._single_tree, result["single"])
+            self._populate_ngram_table(self._pairs_tree, result["pairs"])
+            self._populate_ngram_table(self._triples_tree, result["triples"])
             self._show_analysis_panel()
 
         def finish(error: Exception | None, result: dict[str, list[tuple[str, int]]] | None) -> None:
@@ -680,7 +753,11 @@ class EditorialApp:
 
         def worker() -> None:
             try:
-                tokens = [m.group(0) for m in token_re.finditer(text.lower())]
+                raw_tokens = [m.group(0) for m in token_re.finditer(text.lower())]
+                tokens = [
+                    tok for tok in raw_tokens
+                    if tok.isalpha() and len(tok) > 1 and tok not in blocked_words
+                ]
                 total = len(tokens)
                 if total == 0:
                     self.root.after(0, lambda: finish(None, {"single": [], "pairs": [], "triples": []}))
@@ -702,9 +779,9 @@ class EditorialApp:
                         pct = 3 + int((i / total) * 90)
                         self.root.after(0, lambda p=pct: set_progress(p))
 
-                top_single = [(w, c) for w, c in uni.most_common(5)]
-                top_pairs = [(" ".join(k), c) for k, c in bi.most_common(5)]
-                top_triples = [(" ".join(k), c) for k, c in tri.most_common(5)]
+                top_single = [(w, c) for w, c in uni.most_common(10)]
+                top_pairs = [(" ".join(k), c) for k, c in bi.most_common(10)]
+                top_triples = [(" ".join(k), c) for k, c in tri.most_common(10)]
 
                 result = {
                     "single": top_single,
@@ -722,9 +799,7 @@ class EditorialApp:
         if not (self.filter_active and any(self._filter_hits.values())):
             return None
         ranges: list[tuple[int, int, str]] = []
-        for level in ("red", "yellow", "purple"):
-            if level not in self._enabled_filter_levels:
-                continue
+        for level in ("red", "purple"):
             for ws, we in self._filter_hits.get(level, []):
                 ranges.append((ws, we, level))
         return sorted(ranges, key=lambda x: x[0])
@@ -740,24 +815,26 @@ class EditorialApp:
             pov_character_names=pov_names,
             active_pov_pronouns=active_pov,
         )
-        hits.extend((start, end, "purple") for start, end in find_quote_issues(text))
-        ranges = [(ws, we, cls) for ws, we, cls in hits if cls in self._enabled_filter_levels]
-        return sorted(ranges, key=lambda x: x[0])
+        merged_hits = [
+            (ws, we, "red" if cls == "yellow" else cls)
+            for ws, we, cls in hits
+        ]
+        merged_hits.extend((start, end, "purple") for start, end in find_quote_issues(text))
+        return sorted(merged_hits, key=lambda x: x[0])
 
     def _build_tagged_export(self, text: str, ranges: list[tuple[int, int, str]]) -> str:
         if not ranges:
             return text
 
-        id_map = {"red": "r", "yellow": "y", "purple": "p"}
         out: list[str] = []
         pos = 0
 
-        for start, end, level in ranges:
+        for start, end, _level in ranges:
             if start < pos:
                 continue
             out.append(text[pos:start])
             word = text[start:end]
-            out.append(f"[{id_map[level]}~{word}]")
+            out.append(f"[{word}]")
             pos = end
 
         out.append(text[pos:])
@@ -774,7 +851,7 @@ class EditorialApp:
             return len(self.text.get("1.0", "end-1c"))
 
     def _build_rtf_export(self, text: str, ranges: list[tuple[int, int, str]]) -> str:
-        color_idx = {"red": 1, "yellow": 2, "purple": 3}
+        color_idx = {"red": 1, "purple": 2}
 
         chunks: list[str] = []
         pos = 0
@@ -791,7 +868,7 @@ class EditorialApp:
         header = (
             r"{\rtf1\ansi\deff0"
             r"{\fonttbl{\f0 Consolas;}}"
-            r"{\colortbl ;\red243\green139\blue168;\red249\green226\blue175;\red203\green166\blue247;}"
+            r"{\colortbl ;\red243\green139\blue168;\red249\green226\blue175;}"
             r"\viewkind4\uc1\pard\f0\fs22 "
         )
         return header + "".join(chunks) + r"}"
@@ -836,9 +913,18 @@ class EditorialApp:
         except tk.TclError:
             pass
 
-    def cut(self)        -> None: self.text.event_generate("<<Cut>>")
-    def copy(self)       -> None: self.text.event_generate("<<Copy>>")
-    def paste(self)      -> None: self.text.event_generate("<<Paste>>")
+    def cut(self) -> None:
+        self.text.event_generate("<<Cut>>")
+        if self.filter_active:
+            self._mark_filter_needs_update()
+
+    def copy(self) -> None:
+        self.text.event_generate("<<Copy>>")
+
+    def paste(self) -> None:
+        self.text.event_generate("<<Paste>>")
+        if self.filter_active:
+            self._mark_filter_needs_update()
     def select_all(self) -> None:
         self.text.tag_add(tk.SEL, "1.0", tk.END)
         self.text.mark_set(tk.INSERT, "end-1c")
@@ -970,7 +1056,7 @@ class EditorialApp:
 
         self._update_status()
         if self.filter_active:
-            self._schedule_filter()
+            self._mark_filter_needs_update()
         self._find_next()
 
     def _replace_all(self) -> None:
@@ -996,26 +1082,31 @@ class EditorialApp:
         self._find_index = "1.0"
         self._update_status()
         if self.filter_active:
-            self._schedule_filter()
+            self._mark_filter_needs_update()
         messagebox.showinfo("Replace All", f"Replaced {count} occurrence(s).")
 
     # ------------------------------------------------------- filter feature
 
     def toggle_filter(self) -> None:
         if self._filter_processing:
-            self._filter_rerun_requested = True
             return
 
         self.filter_active = not self.filter_active
         self._update_filter_btn()
         if self.filter_active:
-            self._legend.pack(side=tk.RIGHT, padx=14)
+            self._ngram_btn.pack_forget()
+            self._ngram_btn.pack(side=tk.RIGHT, padx=(6, 8))
             self._show_density_band()
+            self._show_quote_band()
             self._run_filter()
         else:
+            self._filter_update_needed = False
             self._clear_filter()
             self._lbl_filter.config(text="")
-            self._legend.pack_forget()
+            self._hide_filter_refresh_button()
+            self._ngram_btn.pack_forget()
+            self._ngram_btn.pack(side=tk.RIGHT, padx=(6, 8))
+            self._hide_quote_band()
             self._hide_density_band()
 
     def _set_filter_processing(self, percent: int) -> None:
@@ -1039,44 +1130,37 @@ class EditorialApp:
             )
 
     def _clear_filter(self) -> None:
-        for tag in ("filter_red", "filter_yellow", "filter_purple"):
+        for tag in ("filter_red", "filter_purple"):
             self.text.tag_remove(tag, "1.0", tk.END)
-        self._filter_hits_lines = {"red": [], "yellow": [], "purple": []}
-        self._filter_hit_fracs = {"red": [], "yellow": [], "purple": []}
+        self._filter_hits_lines = {"red": [], "purple": []}
+        self._filter_hit_fracs = {"red": [], "purple": []}
+        if hasattr(self, "_quote_dots"):
+            self._quote_dots.delete("all")
 
-    def _update_level_buttons(self) -> None:
-        styles = {
-            "red": (self._red_btn, RED_FG, RED_BG),
-            "yellow": (self._yellow_btn, YELLOW_FG, YELLOW_BG),
-            "purple": (self._purple_btn, PURPLE_FG, PURPLE_BG),
-        }
-        for level, (btn, fg, bg) in styles.items():
-            active = level in self._enabled_filter_levels
-            if active:
-                btn.config(fg=fg, bg=bg)
-            else:
-                btn.config(fg=TEXT_SUBTLE, bg=BG_SURFACE)
-
-    def _toggle_filter_level(self, level: str) -> None:
-        if not self.filter_active or self._filter_processing:
+    def _show_filter_refresh_button(self) -> None:
+        if not self.filter_active:
             return
-
-        if level in self._enabled_filter_levels:
-            self._enabled_filter_levels.remove(level)
-            add_mode = False
-        else:
-            self._enabled_filter_levels.add(level)
-            add_mode = True
-
-        self._update_level_buttons()
-        ranges = self._filter_hits.get(level, [])
-        if not ranges:
+        if self._filter_refresh_btn.winfo_manager():
             return
+        self._filter_refresh_btn.pack(side=tk.LEFT, padx=(2, 8), after=self._filter_btn)
 
-        self._acquire_ui_lock()
-        self._filter_processing = True
-        self._needs_cache_rebuild = False
-        self._apply_ranges_progressive(level, ranges, add_mode, self._finish_filter_processing)
+    def _hide_filter_refresh_button(self) -> None:
+        if self._filter_refresh_btn.winfo_manager():
+            self._filter_refresh_btn.pack_forget()
+
+    def _mark_filter_needs_update(self) -> None:
+        if not self.filter_active:
+            return
+        self._filter_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Filter — changes pending (click Update)")
+
+    def _on_filter_refresh_clicked(self) -> None:
+        if self._filter_processing:
+            return
+        self._filter_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_filter()
 
     def _finish_filter_processing(self) -> None:
         self._analysis_in_progress = False
@@ -1094,12 +1178,8 @@ class EditorialApp:
         self._needs_cache_rebuild = False
         if self.filter_active:
             self._update_filter_btn()
-        self._update_level_buttons()
         self._request_density_redraw()
         self._release_ui_lock()
-        if self._filter_rerun_requested and self.filter_active:
-            self._filter_rerun_requested = False
-            self._run_filter()
 
     def _acquire_ui_lock(self) -> None:
         self._ui_lock_count += 1
@@ -1109,12 +1189,9 @@ class EditorialApp:
         self._ui_locked_controls.clear()
         controls: list[tk.Widget] = [
             self._filter_btn,
+            self._filter_refresh_btn,
             self._pov_combo,
-            self._pov_names_entry,
             self._ngram_btn,
-            self._red_btn,
-            self._yellow_btn,
-            self._purple_btn,
             self._analysis_close,
         ]
         for widget in controls:
@@ -1124,11 +1201,6 @@ class EditorialApp:
                 widget.config(state="disabled")
             except Exception:
                 continue
-
-        try:
-            self.text.config(state="disabled")
-        except Exception:
-            pass
 
         if not self._ui_menu_locked:
             for menu in getattr(self, "_menus", []):
@@ -1175,48 +1247,9 @@ class EditorialApp:
                     continue
             self._ui_menu_locked = False
 
-    def _apply_ranges_progressive(
-        self,
-        level: str,
-        ranges: list[tuple[int, int]],
-        add_mode: bool,
-        done_callback,
-    ) -> None:
-        tag = f"filter_{level}"
-        total = len(ranges)
-        if total == 0:
-            self._set_filter_processing(100)
-            self.root.after(1, done_callback)
-            return
-
-        step = 400
-        idx = 0
-
-        def run_chunk() -> None:
-            nonlocal idx
-            end = min(idx + step, total)
-            for ws, we in ranges[idx:end]:
-                s = f"1.0 + {ws}c"
-                e = f"1.0 + {we}c"
-                if add_mode:
-                    self.text.tag_add(tag, s, e)
-                else:
-                    self.text.tag_remove(tag, s, e)
-            idx = end
-            pct = int((idx / total) * 100)
-            self._set_filter_processing(pct)
-            if idx < total:
-                self.root.after(1, run_chunk)
-            else:
-                done_callback()
-
-        run_chunk()
-
     def _apply_visible_levels_progressive(self, done_callback) -> None:
         ops: list[tuple[str, int, int]] = []
         for level, ranges in self._filter_hits.items():
-            if level not in self._enabled_filter_levels:
-                continue
             for ws, we in ranges:
                 ops.append((f"filter_{level}", ws, we))
 
@@ -1248,9 +1281,10 @@ class EditorialApp:
         if not self.filter_active:
             return
         if self._filter_processing:
-            self._filter_rerun_requested = True
             return
 
+        self._filter_update_needed = False
+        self._hide_filter_refresh_button()
         self._acquire_ui_lock()
         self._filter_processing = True
         self._analysis_in_progress = True
@@ -1299,13 +1333,14 @@ class EditorialApp:
                     active_pov_pronouns=active_pov,
                 )
                 raw_hits.extend((start, end, "purple") for start, end in find_quote_issues(content))
-                grouped: dict[str, list[tuple[int, int]]] = {"red": [], "yellow": [], "purple": []}
+                grouped: dict[str, list[tuple[int, int]]] = {"red": [], "purple": []}
                 for ws, we, cls in raw_hits:
+                    if cls == "yellow":
+                        cls = "red"
                     if cls in grouped:
                         grouped[cls].append((ws, we))
                 counts = {
                     "red": len(grouped["red"]),
-                    "yellow": len(grouped["yellow"]),
                     "purple": len(grouped["purple"]),
                 }
                 self.root.after(0, lambda: self._complete_filter_analysis(run_id, grouped, counts, None))
@@ -1325,7 +1360,8 @@ class EditorialApp:
                 self.root.after_cancel(self._progress_pulse_job)
                 self._progress_pulse_job = None
             self.filter_active = False
-            self._legend.pack_forget()
+            self._hide_filter_refresh_button()
+            self._hide_quote_band()
             self._hide_density_band()
             self._update_filter_btn()
             self._lbl_filter.config(text="")
@@ -1342,10 +1378,10 @@ class EditorialApp:
         self._set_filter_processing(86)
 
         self._lbl_filter.config(
-            text=(f"Filter \u2014  "
-                  f"\u25cf {counts['red']} obvious   "
-                  f"\u25cf {counts['yellow']} questionable   "
-                  f"\u25cf {counts['purple']} quote issues")
+            text=(
+                f"Filter \u2014  \u25cf {counts['red']} obvious"
+                + (f"   \u25cf {counts['purple']} quote warnings" if counts["purple"] else "")
+            )
         )
         self._apply_visible_levels_progressive(self._finish_filter_processing)
 
@@ -1353,9 +1389,9 @@ class EditorialApp:
         self._cache_build_seq += 1
         build_seq = self._cache_build_seq
 
-        levels = ["red", "yellow", "purple"]
-        self._filter_hits_lines = {"red": [], "yellow": [], "purple": []}
-        self._filter_hit_fracs = {"red": [], "yellow": [], "purple": []}
+        levels = ["red", "purple"]
+        self._filter_hits_lines = {"red": [], "purple": []}
+        self._filter_hit_fracs = {"red": [], "purple": []}
 
         try:
             total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
@@ -1422,16 +1458,51 @@ class EditorialApp:
 
         run_chunk()
 
-    def _schedule_filter(self) -> None:
-        """Debounce: re-analyse 700 ms after the last keystroke."""
-        if not self.filter_active:
-            return
-        if self._filter_job is not None:
-            self.root.after_cancel(self._filter_job)
-        self._filter_job = self.root.after(700, self._run_filter)
-
     def _get_active_pov_pronouns(self) -> list[str]:
         return POV_PRONOUN_MAP.get(self._pov_choice.get(), POV_PRONOUN_MAP["All Pronouns (Broad Scan)"])
+
+    def _get_settings_path(self) -> str:
+        base = os.getenv("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, COMPANY_NAME, APP_NAME, "settings.json")
+
+    def _get_legacy_settings_path(self) -> str:
+        base = os.getenv("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "Editorial", "settings.json")
+
+    def _load_user_settings(self) -> None:
+        data: dict[str, object] | None = None
+        try:
+            with open(self._settings_path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    data = loaded
+        except Exception:
+            pass
+
+        if data is None:
+            legacy = self._get_legacy_settings_path()
+            try:
+                with open(legacy, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                    if isinstance(loaded, dict):
+                        data = loaded
+            except Exception:
+                return
+
+        names = data.get("pov_names", "")
+        if isinstance(names, str):
+            self._pov_names_var.set(names)
+
+    def _save_user_settings(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._settings_path), exist_ok=True)
+            data = {
+                "pov_names": self._pov_names_var.get().strip(),
+            }
+            with open(self._settings_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+        except Exception:
+            pass
 
     def _get_active_pov_names(self) -> set[str]:
         raw = self._pov_names_var.get().strip()
@@ -1441,17 +1512,163 @@ class EditorialApp:
 
     def _on_pov_changed(self, _event=None) -> None:
         if self.filter_active:
-            self._schedule_filter()
+            self._mark_filter_needs_update()
 
-    def _on_pov_names_changed(self, _event=None) -> None:
+    def show_pov_names_dialog(self) -> None:
+        if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
+            self._pov_names_dialog.deiconify()
+            self._pov_names_dialog.lift()
+            self._pov_names_dialog.focus_force()
+            return
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("POV Names")
+        dlg.configure(bg=BG_SURFACE)
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        self._pov_names_dialog = dlg
+
+        panel = tk.Frame(dlg, bg=BG_SURFACE, padx=12, pady=12)
+        panel.pack(fill=tk.BOTH, expand=True)
+
+        self._pov_names_edit_var.set(self._pov_names_var.get())
+
+        tk.Label(
+            panel,
+            text="POV Character Names (comma-separated)",
+            bg=BG_SURFACE,
+            fg=TEXT,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X)
+
+        tk.Label(
+            panel,
+            text="Example: Nalls, Rauld, Detective",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill=tk.X, pady=(2, 8))
+
+        entry = tk.Entry(
+            panel,
+            textvariable=self._pov_names_edit_var,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=ACCENT,
+            relief="flat",
+            font=("Segoe UI", 9),
+            width=42,
+        )
+        entry.pack(fill=tk.X)
+
+        btn_row = tk.Frame(panel, bg=BG_SURFACE)
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+
+        bkw = dict(
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        )
+
+        tk.Button(btn_row, text="Cancel", command=self._cancel_pov_names_dialog, **bkw).pack(side=tk.RIGHT)
+        tk.Button(btn_row, text="Save and Close", command=self._apply_and_close_pov_names_dialog, **bkw).pack(side=tk.RIGHT, padx=(0, 8))
+
+        entry.bind("<Return>", lambda _e: self._apply_and_close_pov_names_dialog())
+        dlg.bind("<Escape>", lambda _e: self._cancel_pov_names_dialog())
+        dlg.protocol("WM_DELETE_WINDOW", self._apply_and_close_pov_names_dialog)
+        self._center_popup(dlg)
+        entry.focus_set()
+
+    def _center_popup(self, dlg: tk.Toplevel) -> None:
+        dlg.update_idletasks()
+        w = dlg.winfo_reqwidth()
+        h = dlg.winfo_reqheight()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        x = rx + max(0, (rw - w) // 2)
+        y = ry + max(0, (rh - h) // 2)
+        dlg.geometry(f"+{x}+{y}")
+
+    def _apply_and_close_pov_names_dialog(self) -> None:
+        new_value = self._pov_names_edit_var.get().strip()
+        self._pov_names_var.set(new_value)
+        self._save_user_settings()
+
+        if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
+            self._pov_names_dialog.grab_release()
+            self._pov_names_dialog.destroy()
+        self._pov_names_dialog = None
+
+        # Apply POV name changes once on close, avoiding per-keystroke reruns.
         if self.filter_active:
-            self._schedule_filter()
+            self._mark_filter_needs_update()
+
+    def _cancel_pov_names_dialog(self) -> None:
+        if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
+            self._pov_names_dialog.grab_release()
+            self._pov_names_dialog.destroy()
+        self._pov_names_dialog = None
 
     def _on_text_configure(self, _event=None) -> None:
-        self._schedule_layout_refresh()
+        if self._resize_in_progress:
+            return
+        if self.filter_active:
+            self._request_density_redraw()
+
+    def _on_root_configure(self, event) -> None:
+        if event.widget is not self.root:
+            return
+
+        try:
+            self._statusbar.config(height=self._statusbar_h)
+            self._statusbar.pack_configure(side=tk.BOTTOM, fill=tk.X)
+            self._statusbar.lift()
+            self._grip_slot.config(width=self._statusbar_h, height=self._statusbar_h)
+            self._sizegrip.place(relx=1.0, rely=1.0, relwidth=1.0, relheight=1.0, anchor="se")
+        except Exception:
+            pass
+
+        self._resize_in_progress = True
+        if self._resize_settle_job is not None:
+            self.root.after_cancel(self._resize_settle_job)
+
+        def _is_left_mouse_down() -> bool:
+            # On Windows, non-client resize drags happen outside Tk widgets.
+            # Querying the global button state avoids running heavy refresh work
+            # while the user still holds the resize grip/corner.
+            if os.name != "nt":
+                return False
+            try:
+                return bool(ctypes.windll.user32.GetKeyState(0x01) & 0x8000)
+            except Exception:
+                return False
+
+        def settle() -> None:
+            if _is_left_mouse_down():
+                self._resize_settle_job = self.root.after(120, settle)
+                return
+            self._resize_settle_job = None
+            self._resize_in_progress = False
+            if self.filter_active:
+                self._request_density_redraw()
+
+        # Redraw bars/dots after resize settles, but avoid expensive cache rebuilds.
+        self._resize_settle_job = self.root.after(280, settle)
 
     def _schedule_layout_refresh(self) -> None:
-        if not self.filter_active or self._filter_processing:
+        if not self.filter_active or self._filter_processing or self._filter_update_needed:
             return
         if self._layout_refresh_job is not None:
             self.root.after_cancel(self._layout_refresh_job)
@@ -1460,7 +1677,7 @@ class EditorialApp:
             self._layout_refresh_job = None
             if not self.filter_active or self._filter_processing:
                 return
-            self._rebuild_filter_line_cache_async(self._request_density_redraw, show_progress=False)
+            self._request_density_redraw()
 
         self._layout_refresh_job = self.root.after(220, run)
 
@@ -1468,6 +1685,7 @@ class EditorialApp:
 
     def _zoom_in(self) -> None:
         self._editor_font.config(size=self._editor_font.cget("size") + 1)
+        self._apply_first_line_indent()
         self.root.after(20, self._redraw_lineno)
         self._schedule_layout_refresh()
 
@@ -1475,8 +1693,27 @@ class EditorialApp:
         s = self._editor_font.cget("size")
         if s > 7:
             self._editor_font.config(size=s - 1)
+            self._apply_first_line_indent()
             self.root.after(20, self._redraw_lineno)
             self._schedule_layout_refresh()
+
+    def _indent_pixels(self) -> int:
+        # Approximate two visible spaces for the active editor font.
+        return max(2, self._editor_font.measure("  "))
+
+    def _apply_first_line_indent(self) -> None:
+        if not hasattr(self, "text"):
+            return
+        if self._indent_first_line_var.get():
+            px = self._indent_pixels()
+            # First-line indent only: wrapped continuation lines stay unindented.
+            self.text.tag_configure("first_line_indent", lmargin1=px, lmargin2=0)
+            self.text.tag_add("first_line_indent", "1.0", "end")
+        else:
+            self.text.tag_remove("first_line_indent", "1.0", "end")
+
+    def _toggle_first_line_indent(self) -> None:
+        self._apply_first_line_indent()
 
     def _toggle_line_numbers(self) -> None:
         if self._show_lines_var.get():
@@ -1485,10 +1722,18 @@ class EditorialApp:
         else:
             self._lineno.pack_forget()
 
+    def _on_ctrl_mousewheel(self, event) -> str:
+        if getattr(event, "delta", 0) > 0:
+            self._zoom_in()
+        elif getattr(event, "delta", 0) < 0:
+            self._zoom_out()
+        return "break"
+
     def _show_density_band(self) -> None:
         if self._density_visible:
             return
-        self._density.pack(side=tk.LEFT, fill=tk.Y, before=self._lineno)
+        anchor = self._quote_dots if self._quote_band_visible else self._lineno
+        self._density.pack(side=tk.LEFT, fill=tk.Y, before=anchor)
         self._density_visible = True
         self._request_density_redraw()
 
@@ -1506,6 +1751,32 @@ class EditorialApp:
         if not self.filter_active:
             return
         h = max(1, self._density.winfo_height())
+        frac = max(0.0, min(1.0, event.y / h))
+        self.text.yview_moveto(frac)
+        self._redraw_lineno()
+        self._update_density_viewport()
+
+    def _show_quote_band(self) -> None:
+        if self._quote_band_visible:
+            return
+        self._quote_dots.pack(side=tk.LEFT, fill=tk.Y, before=self._lineno)
+        self._quote_band_visible = True
+        if self._density_visible:
+            self._density.pack_forget()
+            self._density.pack(side=tk.LEFT, fill=tk.Y, before=self._quote_dots)
+        self._request_density_redraw()
+
+    def _hide_quote_band(self) -> None:
+        if not self._quote_band_visible:
+            return
+        self._quote_dots.pack_forget()
+        self._quote_band_visible = False
+        self._quote_dots.delete("all")
+
+    def _on_quote_band_click(self, event) -> None:
+        if not self.filter_active:
+            return
+        h = max(1, self._quote_dots.winfo_height())
         frac = max(0.0, min(1.0, event.y / h))
         self.text.yview_moveto(frac)
         self._redraw_lineno()
@@ -1554,6 +1825,7 @@ class EditorialApp:
         self._density_static_dirty = False
         self._density.delete("all")
         self._density_viewport_id = None
+        self._quote_dots.delete("all")
         if not self.filter_active or not self._density_visible:
             return
 
@@ -1564,24 +1836,20 @@ class EditorialApp:
         span = max(0.01, last - first)
         pages = max(1, int(math.ceil(1.0 / span)))
 
-        page_counts: list[dict[str, int]] = [
-            {"red": 0, "yellow": 0, "purple": 0} for _ in range(pages)
-        ]
+        page_counts: list[dict[str, int]] = [{"red": 0} for _ in range(pages)]
 
         # Fallback: if display-line cache is empty but highlights exist, use
         # cheap char-offset fractions so the sidebar never appears blank.
         if not any(self._filter_hit_fracs.values()) and any(self._filter_hits.values()):
             total_chars = max(1, self._text_char_length())
-            for level in ("red", "yellow", "purple"):
+            for level in ("red", "purple"):
                 fracs: list[float] = []
                 for ws, we in self._filter_hits.get(level, []):
                     mid = (ws + we) // 2
                     fracs.append(max(0.0, min(0.999999, mid / total_chars)))
                 self._filter_hit_fracs[level] = fracs
 
-        for level in ("red", "yellow", "purple"):
-            if level not in self._enabled_filter_levels:
-                continue
+        for level in ("red",):
             for frac in self._filter_hit_fracs.get(level, []):
                 page_idx = min(pages - 1, max(0, int(frac * pages)))
                 page_counts[page_idx][level] += 1
@@ -1593,24 +1861,28 @@ class EditorialApp:
             y1 = int((i * height) / pages)
             y2 = max(y1 + 1, int(((i + 1) * height) / pages))
 
-            total = counts["red"] + counts["yellow"] + counts["purple"]
+            total = counts["red"]
             if total <= 0 or max_total <= 0:
                 continue
 
             row_w = max(1, int((total / max_total) * avail_w))
-            red_w = int(row_w * (counts["red"] / total))
-            yellow_w = int(row_w * (counts["yellow"] / total))
-            purple_w = row_w - red_w - yellow_w
+            self._density.create_rectangle(1, y1, 1 + row_w, y2, fill=RED_FG, outline="")
 
-            x = 1
-            if red_w > 0:
-                self._density.create_rectangle(x, y1, x + red_w, y2, fill=RED_FG, outline="")
-                x += red_w
-            if yellow_w > 0:
-                self._density.create_rectangle(x, y1, x + yellow_w, y2, fill=YELLOW_FG, outline="")
-                x += yellow_w
-            if purple_w > 0:
-                self._density.create_rectangle(x, y1, x + purple_w, y2, fill=PURPLE_BG, outline="")
+        if self._quote_band_visible:
+            qwidth = max(8, self._quote_dots.winfo_width())
+            qheight = max(20, self._quote_dots.winfo_height())
+            radius = max(2, min(3, qwidth // 3))
+            cx = qwidth // 2
+            for frac in self._filter_hit_fracs.get("purple", []):
+                cy = max(radius, min(qheight - radius, int(frac * qheight)))
+                self._quote_dots.create_oval(
+                    cx - radius,
+                    cy - radius,
+                    cx + radius,
+                    cy + radius,
+                    fill=PURPLE_BG,
+                    outline="",
+                )
 
     def _redraw_lineno(self, *_args) -> None:
         """Repaint the line-number gutter to match the current scroll position."""
@@ -1665,7 +1937,7 @@ class EditorialApp:
 
     def _set_title(self, name: str) -> None:
         self._lbl_filename.config(text=name)
-        self.root.title(f"Editorial \u2014 {name}")
+        self.root.title(f"{APP_NAME} \u2014 {name}")
 
     def _word_count_dialog(self) -> None:
         content = self.text.get("1.0", "end-1c")
@@ -1681,16 +1953,26 @@ class EditorialApp:
             f"Paragraphs:  {paras}",
         )
 
+    def show_about_dialog(self) -> None:
+        messagebox.showinfo(
+            f"About {APP_NAME}",
+            f"{APP_NAME} {APP_VERSION}\n"
+            f"Created by {COMPANY_NAME}\n\n"
+            f"Creator: {CREATOR_NAME}\n"
+            f"Contact: {SUPPORT_EMAIL}",
+        )
+
     # -------------------------------------------------------- event handlers
 
     def _on_key_release(self, _event=None) -> None:
         self._update_status()
+        self._apply_first_line_indent()
         self._redraw_lineno()
         if self._skip_filter_schedule_once:
             self._skip_filter_schedule_once = False
             return
         if self.filter_active and self._should_schedule_filter_for_key(_event):
-            self._schedule_filter()
+            self._mark_filter_needs_update()
 
     def _on_copy_event(self, _event=None) -> None:
         self._skip_filter_schedule_once = True

@@ -1,4 +1,4 @@
-Editorial Build And Release Rules
+﻿Editorial Build And Release Rules
 =================================
 
 Use this file as the source of truth for build/release workflow.
@@ -47,7 +47,7 @@ Build Steps (Windows)
 3. Verify outputs:
    - dist/Editorial.exe
    - release/Editorial-Setup-X.Y.Z.exe (if Inno Setup is installed)
-   - release/Editorial-X.Y.Z-portable.zip (if portable package is needed for release links)
+   - release/Editorial-X.Y.Z-portable.zip
 
 Mandatory Build Verifications
 -----------------------------
@@ -55,6 +55,8 @@ Mandatory Build Verifications
   - installer/Editorial.iss contains #define MyAppVersion "X.Y.Z".
 - Confirm installer filename matches target version:
   - release/Editorial-Setup-X.Y.Z.exe
+- Confirm portable package filename matches target version:
+   - release/Editorial-X.Y.Z-portable.zip
 - Confirm app/runtime version values align:
   - editorial.py APP_VERSION == X.Y.Z
   - scripts/package.ps1 default Version == X.Y.Z
@@ -84,7 +86,7 @@ GitHub Release
 - Create or update a GitHub release for tag vX.Y.Z.
 - Upload binaries produced by the build step:
   - Installer EXE
-  - Portable EXE/ZIP if produced
+  - Portable ZIP
 - Keep release title/tag aligned with APP_VERSION.
 
 Update Checker Contract
@@ -95,3 +97,4 @@ Update Checker Contract
 - Keep both expected assets in release when possible:
   - Editorial-Setup-X.Y.Z.exe
   - Editorial-X.Y.Z-portable.zip
+

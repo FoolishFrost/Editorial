@@ -295,6 +295,7 @@ class EditorialApp:
         self._tools_refresh_index = int(tm.index("end"))
         tm.add_command(label="Set POV Names…", command=self.show_pov_names_dialog)
         tm.add_command(label="Typography Standardizer", command=self.standardize_typography)
+        tm.add_command(label="Proximity Echo Radar", command=self.run_echo_radar)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
@@ -619,6 +620,12 @@ class EditorialApp:
             "punct_loud",
             background=RED_BG,
             foreground=RED_FG,
+            underline=1,
+        )
+        self.text.tag_configure(
+            "echo_hit",
+            background=BG_OVERLAY,
+            foreground=TEXT,
             underline=1,
         )
         self.text.tag_configure("find_match",
@@ -1392,6 +1399,82 @@ class EditorialApp:
             out.append(ch)
 
         return "".join(out)
+
+    def _clear_echo_highlights(self) -> None:
+        self.text.tag_remove("echo_hit", "1.0", tk.END)
+
+    def run_echo_radar(self) -> None:
+        if self._is_editor_processing():
+            return
+
+        text = self.text.get("1.0", "end-1c")
+        self._clear_echo_highlights()
+        if not text.strip():
+            messagebox.showinfo("Proximity Echo Radar", "No text to analyze.")
+            return
+
+        token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+        filler_words = {
+            "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
+            "well", "just", "really", "very", "quite", "actually",
+            "basically", "literally", "perhaps", "maybe",
+        }
+        blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
+        blocked_words.update(filler_words)
+
+        tokens: list[tuple[str, int, int]] = []
+        for m in token_re.finditer(text):
+            word = m.group(0).lower().replace("\u2019", "'")
+            clean = word.replace("'", "")
+            if not clean.isalpha() or len(clean) < 3 or word in blocked_words:
+                continue
+            tokens.append((word, m.start(), m.end()))
+
+        if not tokens:
+            messagebox.showinfo("Proximity Echo Radar", "No uncommon words found to compare.")
+            return
+
+        window_words = 300
+        last_seen: dict[str, int] = {}
+        flagged: set[int] = set()
+        gap_stats: dict[str, list[int]] = {}
+
+        for idx, (word, _start, _end) in enumerate(tokens):
+            prev = last_seen.get(word)
+            if prev is not None:
+                gap = idx - prev
+                if gap <= window_words:
+                    flagged.add(prev)
+                    flagged.add(idx)
+                    gap_stats.setdefault(word, []).append(gap)
+            last_seen[word] = idx
+
+        if not flagged:
+            messagebox.showinfo(
+                "Proximity Echo Radar",
+                f"No proximity echoes found within {window_words} words.",
+            )
+            return
+
+        word_counts: dict[str, int] = {}
+        for idx in sorted(flagged):
+            word, start, end = tokens[idx]
+            self.text.tag_add("echo_hit", f"1.0 + {start}c", f"1.0 + {end}c")
+            word_counts[word] = word_counts.get(word, 0) + 1
+
+        ranked = sorted(
+            word_counts.items(),
+            key=lambda kv: (-kv[1], min(gap_stats.get(kv[0], [window_words]))),
+        )
+        top = ranked[:20]
+        lines = [f"{word}  (hits: {count}, closest gap: {min(gap_stats.get(word, [window_words]))})" for word, count in top]
+        message = (
+            f"Highlighted {len(flagged)} echo occurrence(s) across {len(word_counts)} word(s).\n"
+            f"Window: {window_words} words\n\n"
+            "Top echoes:\n" + "\n".join(lines)
+        )
+        self._lbl_filter.config(text=f"Echo radar - {len(flagged)} hits in {len(word_counts)} words")
+        messagebox.showinfo("Proximity Echo Radar", message)
 
     def select_all(self) -> None:
         self.text.tag_add(tk.SEL, "1.0", tk.END)

@@ -53,7 +53,7 @@ from filter_analyzer import (
 )
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"

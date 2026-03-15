@@ -33,7 +33,9 @@ from tkinter import font as tkfont
 from tkinter import ttk
 from spacy.lang.en.stop_words import STOP_WORDS
 
-from filter_analyzer import analyze_filter_words, analyze_weak_modifiers, find_quote_issues
+from editorial_indicators import IndicatorSubsystem
+from editorial_modes import ModeSubsystem
+from filter_analyzer import analyze_dialogue_mechanics, analyze_filter_words, analyze_weak_modifiers
 
 APP_NAME = "Editorial"
 APP_VERSION = "1.1.0"
@@ -64,6 +66,10 @@ PURPLE_FG = "#1e1e2e"
 PURPLE_BG = "#f9e2af"
 ORANGE_FG = "#f2cd96"
 ORANGE_BG = "#4a3320"
+BLUE_FG   = "#89b4fa"
+BLUE_BG   = "#1f2b40"
+WHITE_FG  = "#f5f5f5"
+WHITE_BG  = "#3a3a3a"
 FIND_BG   = "#45475a"
 
 POV_PRONOUN_MAP: dict[str, list[str]] = {
@@ -73,6 +79,18 @@ POV_PRONOUN_MAP: dict[str, list[str]] = {
     "Third Person Plural (They)": ["they", "them"],
     "All Pronouns (Broad Scan)": ["i", "we", "he", "she", "they", "me", "us", "him", "her", "them"],
 }
+
+EDITOR_MODE_OFF = "off"
+EDITOR_MODE_FILTER = "filter_words"
+EDITOR_MODE_WEAK = "weak_modifiers"
+EDITOR_MODE_PUNCT = "dialogue_punctuation"
+
+EDITOR_MODES: list[tuple[str, str]] = [
+    ("Editor Off", EDITOR_MODE_OFF),
+    ("Filter Words", EDITOR_MODE_FILTER),
+    ("Weak Modifiers", EDITOR_MODE_WEAK),
+    ("Punctuation & Dialogue", EDITOR_MODE_PUNCT),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +111,33 @@ class EditorialApp:
         self.filter_active: bool = False
         self._filter_processing: bool = False
         self._filter_update_needed: bool = False
+        self._weak_update_needed: bool = False
+        self._punct_update_needed: bool = False
         self._weak_mod_active: bool = False
+        self._weak_mod_processing: bool = False
+        self._weak_mod_run_seq: int = 0
+        self._punct_active: bool = False
+        self._punct_processing: bool = False
+        self._punct_run_seq: int = 0
+        self._active_editor_mode: str = EDITOR_MODE_OFF
+        self._editor_mode_var = tk.StringVar(value=EDITOR_MODE_OFF)
+        self._editor_mode_label_var = tk.StringVar(value="Editor Off")
+        self._mode_to_label = {value: label for label, value in EDITOR_MODES}
+        self._label_to_mode = {label: value for label, value in EDITOR_MODES}
         self._weak_mod_hits: list[tuple[int, int]] = []
+        self._weak_hit_fracs: list[float] = []
+        self._punct_hits: dict[str, list[tuple[int, int]]] = {
+            "quote": [],
+            "dash": [],
+            "ellipsis": [],
+            "loud": [],
+        }
+        self._punct_dot_fracs: dict[str, list[float]] = {
+            "quote": [],
+            "dash": [],
+            "ellipsis": [],
+            "loud": [],
+        }
         self._filter_hits: dict[str, list[tuple[int, int]]] = {
             "red": [], "purple": []
         }
@@ -110,6 +153,7 @@ class EditorialApp:
         self._needs_cache_rebuild: bool = False
         self._density_static_dirty: bool = True
         self._density_viewport_id: int | None = None
+        self._density_viewport_canvas: tk.Canvas | None = None
         self._density_viewport_pending: bool = False
         self._density_draw_pending: bool = False
         self._layout_refresh_job: str | None = None
@@ -120,6 +164,10 @@ class EditorialApp:
         self._ui_lock_count: int = 0
         self._ui_menu_locked: bool = False
         self._ui_locked_controls: list[tuple[tk.Widget, str]] = []
+        self._text_locked_prev_state: str = "normal"
+        self._editor_progress_pct: int | None = None
+        self._tools_mode_entries: list[tuple[int, str, str]] = []
+        self._tools_refresh_index: int | None = None
         self._find_dialog: tk.Toplevel | None = None
         self._find_var = tk.StringVar()
         self._replace_var = tk.StringVar()
@@ -131,6 +179,21 @@ class EditorialApp:
         self._pov_names_edit_var = tk.StringVar()
         self._settings_path = self._get_settings_path()
         self._load_user_settings()
+        self._modes = ModeSubsystem(self)
+        for method_name in ModeSubsystem.EXPORTED_METHODS:
+            setattr(self, method_name, getattr(self._modes, method_name))
+        self._indicators = IndicatorSubsystem(
+            self,
+            {
+                "ACCENT": ACCENT,
+                "BG_OVERLAY": BG_OVERLAY,
+                "PURPLE_BG": PURPLE_BG,
+                "BLUE_FG": BLUE_FG,
+                "WHITE_FG": WHITE_FG,
+                "RED_FG": RED_FG,
+                "ORANGE_FG": ORANGE_FG,
+            },
+        )
 
         self._build_menu()
         self._build_toolbar()
@@ -196,12 +259,41 @@ class EditorialApp:
 
         # Tools --------------------------------------------------------------
         tm = tk.Menu(bar, **cfg)
-        tm.add_command(label="Toggle Filter Words",
-                       command=self.toggle_filter, accelerator="Ctrl+Shift+F")
-        tm.add_command(label="Toggle Weak Modifiers",
-                   command=self.toggle_weak_modifiers, accelerator="Ctrl+Shift+W")
-        tm.add_command(label="Refresh Weak Modifiers", command=self.refresh_weak_modifiers)
-        tm.add_command(label="POV Names…", command=self.show_pov_names_dialog)
+        tm.add_radiobutton(
+            label="Editor Off",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_OFF,
+            command=self._on_tools_mode_selected,
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Editor Off", EDITOR_MODE_OFF))
+        tm.add_radiobutton(
+            label="Filter Words",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_FILTER,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+F",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Filter Words", EDITOR_MODE_FILTER))
+        tm.add_radiobutton(
+            label="Weak Modifiers",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_WEAK,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+W",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Weak Modifiers", EDITOR_MODE_WEAK))
+        tm.add_radiobutton(
+            label="Punctuation & Dialogue",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_PUNCT,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+P",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Punctuation & Dialogue", EDITOR_MODE_PUNCT))
+        tm.add_separator()
+        tm.add_command(label="Refresh", command=self._on_filter_refresh_clicked)
+        self._tools_refresh_index = int(tm.index("end"))
+        tm.add_command(label="Set POV Names…", command=self.show_pov_names_dialog)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
@@ -215,6 +307,7 @@ class EditorialApp:
         bar.add_cascade(label="Help", menu=hm)
 
         self._menus: list[tk.Menu] = [fm, em, vm, tm, hm]
+        self._tools_menu = tm
 
         self.root.config(menu=bar)
 
@@ -224,24 +317,41 @@ class EditorialApp:
         self._toolbar = tk.Frame(self.root, bg=BG_SURFACE, pady=3)
         self._toolbar.pack(side=tk.TOP, fill=tk.X)
 
-        # Filter Words toggle button
-        self._filter_btn = tk.Button(
-            self._toolbar, text="\u29c6  Filter Words: OFF",
-            command=self.toggle_filter,
-            bg=BG_SURFACE, fg=TEXT_SUBTLE,
-            activebackground=BG_OVERLAY, activeforeground=TEXT,
-            relief="flat", bd=0, padx=12, pady=5,
-            cursor="hand2", font=("Segoe UI", 9, "bold"),
-        )
-        self._filter_btn.pack(side=tk.LEFT, padx=6)
-
         tk.Label(
+            self._toolbar,
+            text="Editorial Mode:",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(8, 6))
+
+        self._mode_combo = ttk.Combobox(
+            self._toolbar,
+            state="readonly",
+            values=[label for label, _ in EDITOR_MODES],
+            textvariable=self._editor_mode_label_var,
+            width=24,
+        )
+        self._mode_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self._mode_combo.bind("<<ComboboxSelected>>", self._on_mode_combo_selected)
+
+        self._mode_progress_label = tk.Label(
+            self._toolbar,
+            text="",
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            padx=6,
+        )
+        self._mode_progress_label.pack(side=tk.LEFT)
+
+        self._pov_label = tk.Label(
             self._toolbar,
             text="POV Setting:",
             bg=BG_SURFACE,
             fg=TEXT_SUBTLE,
             font=("Segoe UI", 9),
-        ).pack(side=tk.LEFT, padx=(10, 6))
+        )
 
         self._pov_combo = ttk.Combobox(
             self._toolbar,
@@ -250,7 +360,6 @@ class EditorialApp:
             textvariable=self._pov_choice,
             width=28,
         )
-        self._pov_combo.pack(side=tk.LEFT, padx=(0, 6))
         self._pov_combo.bind("<<ComboboxSelected>>", self._on_pov_changed)
 
         self._ngram_btn = tk.Button(
@@ -272,7 +381,7 @@ class EditorialApp:
 
         self._filter_refresh_btn = tk.Button(
             self._toolbar,
-            text="Update",
+            text="Refresh",
             command=self._on_filter_refresh_clicked,
             bg=BG_OVERLAY,
             fg=TEXT,
@@ -285,6 +394,8 @@ class EditorialApp:
             cursor="hand2",
             font=("Segoe UI", 9, "bold"),
         )
+
+        self._sync_editor_mode_ui()
 
     # --------------------------------------------------------------- editor
 
@@ -425,16 +536,16 @@ class EditorialApp:
             cursor="hand2",
         )
         self._density.bind("<Button-1>", self._on_density_click)
-        self._density.bind("<B1-Motion>", self._on_density_click)
+        self._density.bind("<B1-Motion>", self._on_density_drag)
         self._density.bind("<Configure>", self._on_density_configure)
 
         # Quote-warning dot band (yellow dots)
         self._quote_dots = tk.Canvas(
-            container, bg=BG_SURFACE, width=12, highlightthickness=0,
+            container, bg=BG_SURFACE, width=30, highlightthickness=0,
             cursor="hand2",
         )
         self._quote_dots.bind("<Button-1>", self._on_quote_band_click)
-        self._quote_dots.bind("<B1-Motion>", self._on_quote_band_click)
+        self._quote_dots.bind("<B1-Motion>", self._on_quote_band_drag)
         self._quote_dots.bind("<Configure>", self._on_density_configure)
 
         # Line-number canvas
@@ -474,6 +585,40 @@ class EditorialApp:
             "filter_orange",
             background=ORANGE_BG,
             foreground=ORANGE_FG,
+        )
+        self.text.tag_configure(
+            "filter_blue",
+            background=BLUE_BG,
+            foreground=BLUE_FG,
+        )
+        self.text.tag_configure(
+            "filter_white",
+            background=WHITE_BG,
+            foreground=WHITE_FG,
+        )
+        self.text.tag_configure(
+            "punct_quote",
+            background=PURPLE_BG,
+            foreground=PURPLE_FG,
+            underline=1,
+        )
+        self.text.tag_configure(
+            "punct_dash",
+            background=BLUE_BG,
+            foreground=BLUE_FG,
+            underline=1,
+        )
+        self.text.tag_configure(
+            "punct_ellipsis",
+            background=WHITE_BG,
+            foreground=WHITE_FG,
+            underline=1,
+        )
+        self.text.tag_configure(
+            "punct_loud",
+            background=RED_BG,
+            foreground=RED_FG,
+            underline=1,
         )
         self.text.tag_configure("find_match",
                     background=FIND_BG, foreground=TEXT)
@@ -529,13 +674,13 @@ class EditorialApp:
         self._lbl_filter   = tk.Label(bar, text="",
                                       bg="#11111b", fg=ACCENT,
                                       font=("Segoe UI", 9), padx=10, pady=3)
-        self._lbl_filename = tk.Label(bar, text="Untitled",   **lkw)
+        self._legend_frame = tk.Frame(bar, bg="#11111b")
 
         self._lbl_words.pack(side=tk.LEFT)
         self._lbl_chars.pack(side=tk.LEFT)
         self._lbl_pos.pack(side=tk.LEFT)
         self._lbl_filter.pack(side=tk.LEFT, padx=22)
-        self._lbl_filename.pack(side=tk.LEFT, padx=(8, 0))
+        self._legend_frame.pack(side=tk.LEFT, padx=(8, 0))
 
         # Reserve a full-height square at the bottom-right for easy resize grip targeting.
         self._grip_slot = tk.Frame(bar, bg="#11111b", width=bar_h, height=bar_h)
@@ -544,6 +689,7 @@ class EditorialApp:
 
         self._sizegrip = ttk.Sizegrip(self._grip_slot)
         self._sizegrip.place(relx=1.0, rely=1.0, relwidth=1.0, relheight=1.0, anchor="se")
+        self._update_status_legend()
 
     # ------------------------------------------------------------ shortcuts
 
@@ -554,8 +700,9 @@ class EditorialApp:
         root.bind("<Control-s>",       lambda _e: self.save_file())
         root.bind("<Control-S>",       lambda _e: self.save_file_as())
         root.bind("<Control-Shift-s>", lambda _e: self.save_file_as())
-        root.bind("<Control-Shift-F>", lambda _e: self.toggle_filter())
-        root.bind("<Control-Shift-W>", lambda _e: self.toggle_weak_modifiers())
+        root.bind("<Control-Shift-F>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_FILTER))
+        root.bind("<Control-Shift-W>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_WEAK))
+        root.bind("<Control-Shift-P>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_PUNCT))
         root.bind("<Control-f>",       lambda _e: self.show_find_dialog())
         root.bind("<Control-h>",       lambda _e: self.show_find_dialog(show_replace=True))
         root.bind("<Control-equal>",   lambda _e: self._zoom_in())
@@ -586,16 +733,7 @@ class EditorialApp:
         self.text.edit_reset()
         self.current_file = None
         self._set_title("Untitled")
-        if self._weak_mod_active:
-            self._weak_mod_active = False
-            self._clear_weak_modifiers()
-        if self.filter_active:
-            self.filter_active = False
-            self._update_filter_btn()
-            self._lbl_filter.config(text="")
-            self._hide_filter_refresh_button()
-            self._hide_density_band()
-            self._hide_quote_band()
+        self.set_editor_mode(EDITOR_MODE_OFF)
 
     def open_file(self) -> None:
         if not self._confirm_discard():
@@ -626,6 +764,158 @@ class EditorialApp:
             self._clear_filter()
             self._mark_filter_needs_update()
 
+    def _toggle_editor_mode_shortcut(self, mode: str) -> None:
+        current = self._active_editor_mode
+        if current == mode:
+            self.set_editor_mode(EDITOR_MODE_OFF)
+            return
+        self.set_editor_mode(mode)
+
+    def _on_mode_combo_selected(self, _event=None) -> None:
+        selected = self._editor_mode_label_var.get().strip()
+        self.set_editor_mode(self._label_to_mode.get(selected, EDITOR_MODE_OFF))
+
+    def _on_tools_mode_selected(self) -> None:
+        self.set_editor_mode(self._editor_mode_var.get())
+
+    def _set_editor_progress(self, percent: int | None, prefix: str) -> None:
+        if percent is None:
+            self._editor_progress_pct = None
+            self._mode_progress_label.config(text="")
+            return
+        pct = max(0, min(100, int(percent)))
+        self._editor_progress_pct = pct
+        self._mode_progress_label.config(text=f"Processing {pct}%")
+
+    def _refresh_tools_mode_markers(self) -> None:
+        menu = getattr(self, "_tools_menu", None)
+        if menu is None:
+            return
+        active = self._active_editor_mode
+        for idx, base_label, mode in self._tools_mode_entries:
+            mark = "● " if mode == active else "  "
+            try:
+                menu.entryconfig(idx, label=f"{mark}{base_label}")
+            except Exception:
+                continue
+
+    def _start_filter_bootstrap_progress(self, run_id: int) -> None:
+        def tick() -> None:
+            if run_id != self._filter_run_seq or not self._filter_processing:
+                return
+            cur = self._editor_progress_pct or 2
+            if cur < 35:
+                self._set_filter_processing(cur + 1)
+                self.root.after(90, tick)
+
+        self.root.after(120, tick)
+
+    def _is_editor_processing(self) -> bool:
+        return self._filter_processing or self._weak_mod_processing or self._punct_processing
+
+    def _sync_editor_mode_ui(self) -> None:
+        mode = self._active_editor_mode or EDITOR_MODE_OFF
+        self._editor_mode_var.set(mode)
+        self._editor_mode_label_var.set(self._mode_to_label.get(mode, "Editor Off"))
+        self._update_status_legend()
+        self._refresh_tools_mode_markers()
+
+        if self._tools_menu is not None and self._tools_refresh_index is not None:
+            refresh_state = "disabled" if mode == EDITOR_MODE_OFF else "normal"
+            try:
+                self._tools_menu.entryconfig(self._tools_refresh_index, state=refresh_state)
+            except Exception:
+                pass
+
+        if mode == EDITOR_MODE_FILTER:
+            if not self._pov_label.winfo_manager():
+                self._pov_label.pack(side=tk.LEFT, padx=(8, 6))
+            if not self._pov_combo.winfo_manager():
+                self._pov_combo.pack(side=tk.LEFT, padx=(0, 6))
+        else:
+            if self._pov_combo.winfo_manager():
+                self._pov_combo.pack_forget()
+            if self._pov_label.winfo_manager():
+                self._pov_label.pack_forget()
+
+    def set_editor_mode(self, mode: str) -> None:
+        if mode not in self._mode_to_label:
+            mode = EDITOR_MODE_OFF
+
+        if self._is_editor_processing() and mode != self._active_editor_mode:
+            self.root.bell()
+            return
+
+        current = self._active_editor_mode
+        self._active_editor_mode = mode
+        self._sync_editor_mode_ui()
+
+        if mode == current:
+            return
+
+        self._filter_update_needed = False
+        self._weak_update_needed = False
+        self._punct_update_needed = False
+        self._hide_filter_refresh_button()
+
+        if mode == EDITOR_MODE_OFF:
+            if self.filter_active:
+                self.filter_active = False
+                self._clear_filter()
+            if self._weak_mod_active:
+                self._weak_mod_active = False
+                self._clear_weak_modifiers()
+            if self._punct_active:
+                self._punct_active = False
+                self._clear_dialogue_mechanics()
+            self._set_editor_progress(None, "")
+            self._lbl_filter.config(text="")
+            self._hide_quote_band()
+            self._hide_density_band()
+            return
+
+        if mode == EDITOR_MODE_FILTER:
+            if self._weak_mod_active:
+                self._weak_mod_active = False
+                self._clear_weak_modifiers()
+            if self._punct_active:
+                self._punct_active = False
+                self._clear_dialogue_mechanics()
+            self.filter_active = True
+            self._show_density_band()
+            self._hide_quote_band()
+            self._run_filter()
+            return
+
+        if mode == EDITOR_MODE_WEAK:
+            if self.filter_active:
+                self.filter_active = False
+                self._clear_filter()
+            if self._punct_active:
+                self._punct_active = False
+                self._clear_dialogue_mechanics()
+            self._filter_update_needed = False
+            self._hide_filter_refresh_button()
+            self._hide_quote_band()
+            self._show_density_band()
+            self._weak_mod_active = True
+            self._run_weak_modifiers()
+            return
+
+        if mode == EDITOR_MODE_PUNCT:
+            if self.filter_active:
+                self.filter_active = False
+                self._clear_filter()
+            if self._weak_mod_active:
+                self._weak_mod_active = False
+                self._clear_weak_modifiers()
+            self._filter_update_needed = False
+            self._hide_filter_refresh_button()
+            self._hide_density_band()
+            self._show_quote_band()
+            self._punct_active = True
+            self._run_dialogue_mechanics()
+
     def save_file(self) -> None:
         if self.current_file:
             self._write(self.current_file)
@@ -653,9 +943,10 @@ class EditorialApp:
         text = self.text.get("1.0", "end-1c")
         active_pov = list(self._get_active_pov_pronouns())
         pov_names = self._get_active_pov_names()
+        mode = self._active_editor_mode
 
-        def task():
-            ranges = self._get_export_ranges(text, active_pov, pov_names)
+        def task() -> None:
+            ranges = self._collect_export_ranges(mode, text, active_pov, pov_names)
             rtf = self._build_rtf_export(text, ranges)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(rtf)
@@ -672,10 +963,14 @@ class EditorialApp:
         text = self.text.get("1.0", "end-1c")
         active_pov = list(self._get_active_pov_pronouns())
         pov_names = self._get_active_pov_names()
+        mode = self._active_editor_mode
 
-        def task():
-            ranges = self._get_export_ranges(text, active_pov, pov_names)
-            tagged = self._build_tagged_export(text, ranges)
+        def task() -> None:
+            ranges = self._collect_export_ranges(mode, text, active_pov, pov_names)
+            label_map: dict[str, str] | None = None
+            if mode == EDITOR_MODE_PUNCT:
+                label_map = {"quote": "QUOTE", "dash": "DASH", "ellipsis": "ELLIPSIS", "loud": "LOUD"}
+            tagged = self._build_tagged_export(text, ranges, label_map)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
 
@@ -684,6 +979,7 @@ class EditorialApp:
     def _run_task_with_progress(self, title: str, task, success_message: str) -> None:
         self._acquire_ui_lock()
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title(title)
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -696,6 +992,7 @@ class EditorialApp:
         pb = ttk.Progressbar(panel, mode="indeterminate", length=280)
         pb.pack(fill=tk.X, pady=(10, 2))
         pb.start(12)
+        self._center_popup(dlg)
 
         def finish(error: Exception | None) -> None:
             try:
@@ -730,6 +1027,7 @@ class EditorialApp:
 
         self._acquire_ui_lock()
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title("Scanning Overused Combinations")
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -743,6 +1041,7 @@ class EditorialApp:
         tk.Label(panel, textvariable=pct_var, bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 6))
         pb = ttk.Progressbar(panel, mode="determinate", maximum=100, length=300)
         pb.pack(fill=tk.X)
+        self._center_popup(dlg)
 
         token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
@@ -819,57 +1118,73 @@ class EditorialApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _get_cached_export_ranges(self) -> list[tuple[int, int, str]] | None:
-        if not (self.filter_active and any(self._filter_hits.values())):
-            return None
-        ranges: list[tuple[int, int, str]] = []
-        for level in ("red", "purple"):
-            for ws, we in self._filter_hits.get(level, []):
-                ranges.append((ws, we, level))
-        return sorted(ranges, key=lambda x: x[0])
-
-    def _get_export_ranges(
+    def _collect_export_ranges(
         self,
+        mode: str,
         text: str,
         active_pov: list[str],
         pov_names: set[str] | None = None,
     ) -> list[tuple[int, int, str]]:
-        cached = None if self._filter_update_needed else self._get_cached_export_ranges()
-        if cached is not None:
-            return cached
-        return self._compute_export_ranges(text, active_pov, pov_names)
+        if mode == EDITOR_MODE_WEAK:
+            if not self._weak_update_needed and self._weak_mod_hits:
+                return sorted(
+                    [(ws, we, "orange") for ws, we in self._weak_mod_hits],
+                    key=lambda x: x[0],
+                )
+            hits_raw = analyze_weak_modifiers(text)
+            return sorted(
+                [(ws, we, "orange") for ws, we, _cls in hits_raw],
+                key=lambda x: x[0],
+            )
+        if mode == EDITOR_MODE_PUNCT:
+            ranges: list[tuple[int, int, str]] = []
+            if not self._punct_update_needed and any(self._punct_hits.values()):
+                for cls, hits in self._punct_hits.items():
+                    for ws, we in hits:
+                        ranges.append((ws, we, cls))
+                return sorted(ranges, key=lambda x: x[0])
+            for ws, we, cls in analyze_dialogue_mechanics(text):
+                ranges.append((ws, we, cls))
+            return sorted(ranges, key=lambda x: x[0])
+        if mode == EDITOR_MODE_FILTER:
+            if not self._filter_update_needed and any(self._filter_hits.values()):
+                ranges = []
+                for level in ("red", "purple"):
+                    for ws, we in self._filter_hits.get(level, []):
+                        ranges.append((ws, we, level))
+                return sorted(ranges, key=lambda x: x[0])
+            hits_raw = analyze_filter_words(
+                text,
+                pov_character_names=pov_names,
+                active_pov_pronouns=active_pov,
+            )
+            return sorted(
+                [(ws, we, "red" if cls == "yellow" else cls) for ws, we, cls in hits_raw],
+                key=lambda x: x[0],
+            )
+        return []
 
-    def _compute_export_ranges(
+    def _build_tagged_export(
         self,
         text: str,
-        active_pov: list[str],
-        pov_names: set[str] | None = None,
-    ) -> list[tuple[int, int, str]]:
-        hits = analyze_filter_words(
-            text,
-            pov_character_names=pov_names,
-            active_pov_pronouns=active_pov,
-        )
-        merged_hits = [
-            (ws, we, "red" if cls == "yellow" else cls)
-            for ws, we, cls in hits
-        ]
-        merged_hits.extend((start, end, "purple") for start, end in find_quote_issues(text))
-        return sorted(merged_hits, key=lambda x: x[0])
-
-    def _build_tagged_export(self, text: str, ranges: list[tuple[int, int, str]]) -> str:
+        ranges: list[tuple[int, int, str]],
+        label_map: dict[str, str] | None = None,
+    ) -> str:
         if not ranges:
             return text
 
         out: list[str] = []
         pos = 0
 
-        for start, end, _level in ranges:
+        for start, end, level in ranges:
             if start < pos:
                 continue
             out.append(text[pos:start])
             word = text[start:end]
-            out.append(f"[{word}]")
+            if label_map and level in label_map:
+                out.append(f"[{label_map[level]}:{word}]")
+            else:
+                out.append(f"[{word}]")
             pos = end
 
         out.append(text[pos:])
@@ -886,7 +1201,30 @@ class EditorialApp:
             return len(self.text.get("1.0", "end-1c"))
 
     def _build_rtf_export(self, text: str, ranges: list[tuple[int, int, str]]) -> str:
-        color_idx = {"red": 1, "purple": 2}
+        # Color table entries mirror the exact hex pairs used by in-app text tags.
+        # Index 0 is the implicit "auto" entry (before first semicolon).
+        # cf = foreground index, highlight = background index — same values as app constants.
+        #
+        # Color table:
+        #  1 RED_FG   #f38ba8  \red243\green139\blue168
+        #  2 RED_BG   #3d1520  \red61\green21\blue32
+        #  3 ORANGE_FG #f2cd96 \red242\green205\blue150
+        #  4 ORANGE_BG #4a3320 \red74\green51\blue32
+        #  5 PURPLE_FG #1e1e2e \red30\green30\blue46
+        #  6 PURPLE_BG #f9e2af \red249\green226\blue175
+        #  7 BLUE_FG  #89b4fa  \red137\green180\blue250
+        #  8 BLUE_BG  #1f2b40  \red31\green43\blue64
+        #  9 WHITE_FG #f5f5f5  \red245\green245\blue245
+        # 10 WHITE_BG #3a3a3a  \red58\green58\blue58
+        level_colors: dict[str, tuple[int, int, bool]] = {
+            "red":      (1, 2),   # filter words:     RED_FG on RED_BG
+            "orange":   (3, 4),   # weak modifiers:   ORANGE_FG on ORANGE_BG
+            "quote":    (5, 6),   # quote issues:     PURPLE_FG on PURPLE_BG
+            "dash":     (7, 8),   # dashes:           BLUE_FG on BLUE_BG
+            "ellipsis": (9, 10),  # ellipsis:         WHITE_FG on WHITE_BG
+            "loud":     (1, 2),   # loud punctuation: RED_FG on RED_BG
+            "purple":   (5, 6),   # legacy quote:     PURPLE_FG on PURPLE_BG
+        }
 
         chunks: list[str] = []
         pos = 0
@@ -896,14 +1234,34 @@ class EditorialApp:
             if start > pos:
                 chunks.append(self._rtf_escape(text[pos:start]))
             word = self._rtf_escape(text[start:end])
-            chunks.append(r"{\cf" + str(color_idx[level]) + " " + word + r"\cf0 }")
+            cf, highlight = level_colors.get(level, (1, 2))
+            underline = level in {"quote", "dash", "ellipsis", "loud"}
+            prefix = r"{\cf" + str(cf) + r"\highlight" + str(highlight) + " "
+            if underline:
+                prefix += r"\ul "
+            suffix = r"\ul0\highlight0\cf0 }" if underline else r"\highlight0\cf0 }"
+            chunks.append(prefix + word + suffix)
             pos = end
         chunks.append(self._rtf_escape(text[pos:]))
 
+        color_table = (
+            r"{\colortbl ;"
+            r"\red243\green139\blue168;"   #  1 RED_FG   #f38ba8
+            r"\red61\green21\blue32;"      #  2 RED_BG   #3d1520
+            r"\red242\green205\blue150;"   #  3 ORANGE_FG #f2cd96
+            r"\red74\green51\blue32;"      #  4 ORANGE_BG #4a3320
+            r"\red30\green30\blue46;"      #  5 PURPLE_FG #1e1e2e
+            r"\red249\green226\blue175;"   #  6 PURPLE_BG #f9e2af
+            r"\red137\green180\blue250;"   #  7 BLUE_FG  #89b4fa
+            r"\red31\green43\blue64;"      #  8 BLUE_BG  #1f2b40
+            r"\red245\green245\blue245;"   #  9 WHITE_FG #f5f5f5
+            r"\red58\green58\blue58;"      # 10 WHITE_BG #3a3a3a
+            r"}"
+        )
         header = (
             r"{\rtf1\ansi\deff0"
             r"{\fonttbl{\f0 Consolas;}}"
-            r"{\colortbl ;\red243\green139\blue168;\red249\green226\blue175;}"
+            + color_table +
             r"\viewkind4\uc1\pard\f0\fs22 "
         )
         return header + "".join(chunks) + r"}"
@@ -950,16 +1308,14 @@ class EditorialApp:
 
     def cut(self) -> None:
         self.text.event_generate("<<Cut>>")
-        if self.filter_active:
-            self._mark_filter_needs_update()
+        self._mark_active_mode_needs_update()
 
     def copy(self) -> None:
         self.text.event_generate("<<Copy>>")
 
     def paste(self) -> None:
         self.text.event_generate("<<Paste>>")
-        if self.filter_active:
-            self._mark_filter_needs_update()
+        self._mark_active_mode_needs_update()
     def select_all(self) -> None:
         self.text.tag_add(tk.SEL, "1.0", tk.END)
         self.text.mark_set(tk.INSERT, "end-1c")
@@ -973,6 +1329,7 @@ class EditorialApp:
             return
 
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title("Find / Replace")
         dlg.configure(bg=BG_SURFACE)
         dlg.resizable(False, False)
@@ -1019,6 +1376,7 @@ class EditorialApp:
         dlg.protocol("WM_DELETE_WINDOW", self._close_find_dialog)
 
         self._set_replace_visibility(show_replace)
+        self._center_popup(dlg)
         find_entry.focus_set()
 
     def _set_replace_visibility(self, show_replace: bool) -> None:
@@ -1090,8 +1448,7 @@ class EditorialApp:
             return
 
         self._update_status()
-        if self.filter_active:
-            self._mark_filter_needs_update()
+        self._mark_active_mode_needs_update()
         self._find_next()
 
     def _replace_all(self) -> None:
@@ -1116,404 +1473,8 @@ class EditorialApp:
         self._clear_find_tag()
         self._find_index = "1.0"
         self._update_status()
-        if self.filter_active:
-            self._mark_filter_needs_update()
+        self._mark_active_mode_needs_update()
         messagebox.showinfo("Replace All", f"Replaced {count} occurrence(s).")
-
-    # ------------------------------------------------------- filter feature
-
-    def _clear_weak_modifiers(self) -> None:
-        self.text.tag_remove("filter_orange", "1.0", tk.END)
-        self._weak_mod_hits = []
-
-    def refresh_weak_modifiers(self) -> None:
-        if not self._weak_mod_active:
-            return
-        content = self.text.get("1.0", "end-1c")
-        self._clear_weak_modifiers()
-        hits = analyze_weak_modifiers(content)
-        for ws, we, _cls in hits:
-            self.text.tag_add("filter_orange", f"1.0 + {ws}c", f"1.0 + {we}c")
-            self._weak_mod_hits.append((ws, we))
-
-    def toggle_weak_modifiers(self) -> None:
-        self._weak_mod_active = not self._weak_mod_active
-        if self._weak_mod_active:
-            self.refresh_weak_modifiers()
-        else:
-            self._clear_weak_modifiers()
-
-    def toggle_filter(self) -> None:
-        if self._filter_processing:
-            return
-
-        self.filter_active = not self.filter_active
-        self._update_filter_btn()
-        if self.filter_active:
-            self._ngram_btn.pack_forget()
-            self._ngram_btn.pack(side=tk.RIGHT, padx=(6, 8))
-            self._show_density_band()
-            self._show_quote_band()
-            self._run_filter()
-        else:
-            self._filter_update_needed = False
-            self._clear_filter()
-            self._lbl_filter.config(text="")
-            self._hide_filter_refresh_button()
-            self._ngram_btn.pack_forget()
-            self._ngram_btn.pack(side=tk.RIGHT, padx=(6, 8))
-            self._hide_quote_band()
-            self._hide_density_band()
-
-    def _set_filter_processing(self, percent: int) -> None:
-        pct = max(1, min(100, int(percent)))
-        self._filter_btn.config(
-            text=f"\u29c6  Processing {pct}%",
-            fg=ACCENT,
-            bg=BG_OVERLAY,
-        )
-
-    def _update_filter_btn(self) -> None:
-        if self.filter_active:
-            self._filter_btn.config(
-                text="\u29c6  Filter Words: ON",
-                fg=GREEN_FG, bg=GREEN_BG,
-            )
-        else:
-            self._filter_btn.config(
-                text="\u29c6  Filter Words: OFF",
-                fg=TEXT_SUBTLE, bg=BG_SURFACE,
-            )
-
-    def _clear_filter(self) -> None:
-        for tag in ("filter_red", "filter_purple"):
-            self.text.tag_remove(tag, "1.0", tk.END)
-        self._filter_hits = {"red": [], "purple": []}
-        self._filter_hits_lines = {"red": [], "purple": []}
-        self._filter_hit_fracs = {"red": [], "purple": []}
-        if hasattr(self, "_quote_dots"):
-            self._quote_dots.delete("all")
-
-    def _show_filter_refresh_button(self) -> None:
-        if not self.filter_active:
-            return
-        if self._filter_refresh_btn.winfo_manager():
-            return
-        self._filter_refresh_btn.pack(side=tk.LEFT, padx=(2, 8), after=self._filter_btn)
-
-    def _hide_filter_refresh_button(self) -> None:
-        if self._filter_refresh_btn.winfo_manager():
-            self._filter_refresh_btn.pack_forget()
-
-    def _mark_filter_needs_update(self) -> None:
-        if not self.filter_active:
-            return
-        self._filter_update_needed = True
-        self._show_filter_refresh_button()
-        self._lbl_filter.config(text="Filter — changes pending (click Update)")
-
-    def _on_filter_refresh_clicked(self) -> None:
-        if self._filter_processing:
-            return
-        self._filter_update_needed = False
-        self._hide_filter_refresh_button()
-        self._run_filter()
-
-    def _finish_filter_processing(self) -> None:
-        self._analysis_in_progress = False
-        if self._progress_pulse_job is not None:
-            self.root.after_cancel(self._progress_pulse_job)
-            self._progress_pulse_job = None
-        if self._needs_cache_rebuild:
-            self._set_filter_processing(95)
-            self._rebuild_filter_line_cache_async(self._finalize_filter_processing, show_progress=True)
-            return
-        self._finalize_filter_processing()
-
-    def _finalize_filter_processing(self) -> None:
-        self._filter_processing = False
-        self._needs_cache_rebuild = False
-        if self.filter_active:
-            self._update_filter_btn()
-        self._request_density_redraw()
-        self._release_ui_lock()
-
-    def _acquire_ui_lock(self) -> None:
-        self._ui_lock_count += 1
-        if self._ui_lock_count > 1:
-            return
-
-        self._ui_locked_controls.clear()
-        controls: list[tk.Widget] = [
-            self._filter_btn,
-            self._filter_refresh_btn,
-            self._pov_combo,
-            self._ngram_btn,
-            self._analysis_close,
-        ]
-        for widget in controls:
-            try:
-                state = str(widget.cget("state"))
-                self._ui_locked_controls.append((widget, state))
-                widget.config(state="disabled")
-            except Exception:
-                continue
-
-        if not self._ui_menu_locked:
-            for menu in getattr(self, "_menus", []):
-                try:
-                    end = menu.index("end")
-                    if end is None:
-                        continue
-                    for idx in range(end + 1):
-                        menu.entryconfig(idx, state="disabled")
-                except Exception:
-                    continue
-            self._ui_menu_locked = True
-
-    def _release_ui_lock(self) -> None:
-        if self._ui_lock_count <= 0:
-            self._ui_lock_count = 0
-            return
-
-        self._ui_lock_count -= 1
-        if self._ui_lock_count > 0:
-            return
-
-        for widget, state in self._ui_locked_controls:
-            try:
-                widget.config(state=state)
-            except Exception:
-                continue
-        self._ui_locked_controls.clear()
-
-        try:
-            self.text.config(state="normal")
-        except Exception:
-            pass
-
-        if self._ui_menu_locked:
-            for menu in getattr(self, "_menus", []):
-                try:
-                    end = menu.index("end")
-                    if end is None:
-                        continue
-                    for idx in range(end + 1):
-                        menu.entryconfig(idx, state="normal")
-                except Exception:
-                    continue
-            self._ui_menu_locked = False
-
-    def _apply_visible_levels_progressive(self, done_callback) -> None:
-        ops: list[tuple[str, int, int]] = []
-        for level, ranges in self._filter_hits.items():
-            for ws, we in ranges:
-                ops.append((f"filter_{level}", ws, we))
-
-        total = len(ops)
-        if total == 0:
-            self._set_filter_processing(100)
-            self.root.after(1, done_callback)
-            return
-
-        step = 500
-        idx = 0
-
-        def run_chunk() -> None:
-            nonlocal idx
-            end = min(idx + step, total)
-            for tag, ws, we in ops[idx:end]:
-                self.text.tag_add(tag, f"1.0 + {ws}c", f"1.0 + {we}c")
-            idx = end
-            pct = 86 + int((idx / total) * 9)
-            self._set_filter_processing(pct)
-            if idx < total:
-                self.root.after(1, run_chunk)
-            else:
-                done_callback()
-
-        run_chunk()
-
-    def _run_filter(self) -> None:
-        if not self.filter_active:
-            return
-        if self._filter_processing:
-            return
-
-        self._filter_update_needed = False
-        self._hide_filter_refresh_button()
-        self._acquire_ui_lock()
-        self._filter_processing = True
-        self._analysis_in_progress = True
-        self._needs_cache_rebuild = True
-        self._filter_run_seq += 1
-        run_id = self._filter_run_seq
-        self._progress_pulse_value = 2
-        self._set_filter_processing(1)
-        self._clear_filter()
-        content = self.text.get("1.0", tk.END)
-        active_pov = self._get_active_pov_pronouns()
-        pov_names = self._get_active_pov_names()
-        self._start_progress_pulse()
-        self._start_filter_analysis_async(run_id, content, active_pov, pov_names)
-
-    def _start_progress_pulse(self) -> None:
-        if self._progress_pulse_job is not None:
-            self.root.after_cancel(self._progress_pulse_job)
-
-        self._progress_pulse_value = 5
-
-        def tick() -> None:
-            if not self._analysis_in_progress:
-                self._progress_pulse_job = None
-                return
-
-            self._progress_pulse_value = min(85, self._progress_pulse_value + 2)
-
-            self._set_filter_processing(self._progress_pulse_value)
-            self._progress_pulse_job = self.root.after(80, tick)
-
-        self._progress_pulse_job = self.root.after(80, tick)
-
-    def _start_filter_analysis_async(
-        self,
-        run_id: int,
-        content: str,
-        active_pov: list[str],
-        pov_names: set[str],
-    ) -> None:
-        def worker() -> None:
-            try:
-                raw_hits = analyze_filter_words(
-                    content,
-                    pov_character_names=pov_names,
-                    active_pov_pronouns=active_pov,
-                )
-                raw_hits.extend((start, end, "purple") for start, end in find_quote_issues(content))
-                grouped: dict[str, list[tuple[int, int]]] = {"red": [], "purple": []}
-                for ws, we, cls in raw_hits:
-                    if cls == "yellow":
-                        cls = "red"
-                    if cls in grouped:
-                        grouped[cls].append((ws, we))
-                counts = {
-                    "red": len(grouped["red"]),
-                    "purple": len(grouped["purple"]),
-                }
-                self.root.after(0, lambda: self._complete_filter_analysis(run_id, grouped, counts, None))
-            except Exception as exc:
-                self.root.after(0, lambda: self._complete_filter_analysis(run_id, None, None, exc))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _complete_filter_analysis(self, run_id: int, grouped, counts, error: Exception | None) -> None:
-        if run_id != self._filter_run_seq:
-            return
-
-        if error is not None:
-            self._filter_processing = False
-            self._analysis_in_progress = False
-            if self._progress_pulse_job is not None:
-                self.root.after_cancel(self._progress_pulse_job)
-                self._progress_pulse_job = None
-            self.filter_active = False
-            self._hide_filter_refresh_button()
-            self._hide_quote_band()
-            self._hide_density_band()
-            self._update_filter_btn()
-            self._lbl_filter.config(text="")
-            self._release_ui_lock()
-            messagebox.showerror("Filter Analyzer Error", str(error))
-            return
-
-        self._analysis_in_progress = False
-        if self._progress_pulse_job is not None:
-            self.root.after_cancel(self._progress_pulse_job)
-            self._progress_pulse_job = None
-
-        self._filter_hits = grouped
-        self._set_filter_processing(86)
-
-        self._lbl_filter.config(
-            text=(
-                f"Filter \u2014  \u25cf {counts['red']} obvious"
-                + (f"   \u25cf {counts['purple']} quote warnings" if counts["purple"] else "")
-            )
-        )
-        self._apply_visible_levels_progressive(self._finish_filter_processing)
-
-    def _rebuild_filter_line_cache_async(self, done_callback, show_progress: bool = False) -> None:
-        self._cache_build_seq += 1
-        build_seq = self._cache_build_seq
-
-        levels = ["red", "purple"]
-        self._filter_hits_lines = {"red": [], "purple": []}
-        self._filter_hit_fracs = {"red": [], "purple": []}
-
-        try:
-            total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
-        except Exception:
-            total_display_lines = 1
-        total_display_lines = max(1, total_display_lines)
-
-        ops: list[tuple[str, int]] = []
-        for lvl in levels:
-            for ws, we in self._filter_hits.get(lvl, []):
-                ops.append((lvl, (ws + we) // 2))
-
-        # Sort by position so the density band fills top-to-bottom during progressive draws
-        ops.sort(key=lambda x: x[1])
-
-        total = len(ops)
-        if total == 0:
-            self.root.after(1, done_callback)
-            return
-
-        idx = 0
-        step = 300
-        prev_idx_str = "1.0"
-        prev_disp = 0
-
-        def run_chunk() -> None:
-            nonlocal idx, prev_idx_str, prev_disp
-            if build_seq != self._cache_build_seq:
-                return
-
-            end = min(total, idx + step)
-            for lvl, mid in ops[idx:end]:
-                try:
-                    idx_str = self.text.index(f"1.0 + {mid}c")
-                    line = int(idx_str.split(".")[0])
-                    delta = int(self.text.count(prev_idx_str, idx_str, "displaylines")[0])
-                    disp = prev_disp + max(0, delta)
-                except Exception:
-                    try:
-                        idx_str = self.text.index(f"1.0 + {mid}c")
-                        line = int(idx_str.split(".")[0])
-                        disp = int(self.text.count("1.0", idx_str, "displaylines")[0])
-                    except Exception:
-                        continue
-
-                prev_idx_str = idx_str
-                prev_disp = disp
-
-                frac = max(0.0, min(0.999999, disp / total_display_lines))
-                self._filter_hits_lines[lvl].append(line)
-                self._filter_hit_fracs[lvl].append(frac)
-
-            idx = end
-            if show_progress:
-                pct = 96 + int((idx / total) * 4)
-                self._set_filter_processing(pct)
-            # Draw whatever we have so far — band fills top-to-bottom progressively
-            if self._density_visible:
-                self._request_density_redraw()
-            if idx < total:
-                self.root.after(1, run_chunk)
-            else:
-                done_callback()
-
-        run_chunk()
 
     def _get_active_pov_pronouns(self) -> list[str]:
         return POV_PRONOUN_MAP.get(self._pov_choice.get(), POV_PRONOUN_MAP["All Pronouns (Broad Scan)"])
@@ -1562,14 +1523,25 @@ class EditorialApp:
             pass
 
     def _get_active_pov_names(self) -> set[str]:
+        if self._pov_choice.get() == "First Person (I/We)":
+            return set()
         raw = self._pov_names_var.get().strip()
         if not raw:
             return set()
         return {name.strip() for name in raw.split(",") if name.strip()}
 
-    def _on_pov_changed(self, _event=None) -> None:
-        if self.filter_active:
+    def _rerun_filter_for_pov_change(self) -> None:
+        if not self.filter_active:
+            return
+        if self._filter_processing:
             self._mark_filter_needs_update()
+            return
+        self._filter_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_filter()
+
+    def _on_pov_changed(self, _event=None) -> None:
+        self._rerun_filter_for_pov_change()
 
     def show_pov_names_dialog(self) -> None:
         if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
@@ -1579,6 +1551,7 @@ class EditorialApp:
             return
 
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title("POV Names")
         dlg.configure(bg=BG_SURFACE)
         dlg.resizable(False, False)
@@ -1657,6 +1630,8 @@ class EditorialApp:
         x = rx + max(0, (rw - w) // 2)
         y = ry + max(0, (rh - h) // 2)
         dlg.geometry(f"+{x}+{y}")
+        dlg.deiconify()
+        dlg.lift()
 
     def _apply_and_close_pov_names_dialog(self) -> None:
         new_value = self._pov_names_edit_var.get().strip()
@@ -1669,8 +1644,7 @@ class EditorialApp:
         self._pov_names_dialog = None
 
         # Apply POV name changes once on close, avoiding per-keystroke reruns.
-        if self.filter_active:
-            self._mark_filter_needs_update()
+        self._rerun_filter_for_pov_change()
 
     def _cancel_pov_names_dialog(self) -> None:
         if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
@@ -1681,7 +1655,7 @@ class EditorialApp:
     def _on_text_configure(self, _event=None) -> None:
         if self._resize_in_progress:
             return
-        if self.filter_active:
+        if self.filter_active or self._weak_mod_active or self._punct_active:
             self._request_density_redraw()
 
     def _on_root_configure(self, event) -> None:
@@ -1718,21 +1692,21 @@ class EditorialApp:
                 return
             self._resize_settle_job = None
             self._resize_in_progress = False
-            if self.filter_active:
+            if self.filter_active or self._weak_mod_active or self._punct_active:
                 self._request_density_redraw()
 
         # Redraw bars/dots after resize settles, but avoid expensive cache rebuilds.
         self._resize_settle_job = self.root.after(280, settle)
 
     def _schedule_layout_refresh(self) -> None:
-        if not self.filter_active or self._filter_processing or self._filter_update_needed:
+        if (not self.filter_active and not self._weak_mod_active and not self._punct_active) or self._is_editor_processing() or self._filter_update_needed:
             return
         if self._layout_refresh_job is not None:
             self.root.after_cancel(self._layout_refresh_job)
 
         def run() -> None:
             self._layout_refresh_job = None
-            if not self.filter_active or self._filter_processing:
+            if (not self.filter_active and not self._weak_mod_active and not self._punct_active) or self._is_editor_processing():
                 return
             self._request_density_redraw()
 
@@ -1787,159 +1761,43 @@ class EditorialApp:
         return "break"
 
     def _show_density_band(self) -> None:
-        if self._density_visible:
-            return
-        anchor = self._quote_dots if self._quote_band_visible else self._lineno
-        self._density.pack(side=tk.LEFT, fill=tk.Y, before=anchor)
-        self._density_visible = True
-        self._request_density_redraw()
+        self._indicators.show_density_band()
 
     def _hide_density_band(self) -> None:
-        if not self._density_visible:
-            return
-        self._density.pack_forget()
-        self._density_visible = False
-        self._density_viewport_id = None
+        self._indicators.hide_density_band()
 
     def _on_density_configure(self, _event=None) -> None:
-        self._request_density_redraw()
+        self._indicators.on_density_configure(_event)
 
     def _on_density_click(self, event) -> None:
-        if not self.filter_active:
-            return
-        h = max(1, self._density.winfo_height())
-        frac = max(0.0, min(1.0, event.y / h))
-        self.text.yview_moveto(frac)
-        self._redraw_lineno()
-        self._update_density_viewport()
+        self._indicators.on_density_click(event)
+
+    def _on_density_drag(self, event) -> None:
+        self._indicators.on_density_drag(event)
 
     def _show_quote_band(self) -> None:
-        if self._quote_band_visible:
-            return
-        self._quote_dots.pack(side=tk.LEFT, fill=tk.Y, before=self._lineno)
-        self._quote_band_visible = True
-        if self._density_visible:
-            self._density.pack_forget()
-            self._density.pack(side=tk.LEFT, fill=tk.Y, before=self._quote_dots)
-        self._request_density_redraw()
+        self._indicators.show_quote_band()
 
     def _hide_quote_band(self) -> None:
-        if not self._quote_band_visible:
-            return
-        self._quote_dots.pack_forget()
-        self._quote_band_visible = False
-        self._quote_dots.delete("all")
+        self._indicators.hide_quote_band()
 
     def _on_quote_band_click(self, event) -> None:
-        if not self.filter_active:
-            return
-        h = max(1, self._quote_dots.winfo_height())
-        frac = max(0.0, min(1.0, event.y / h))
-        self.text.yview_moveto(frac)
-        self._redraw_lineno()
-        self._update_density_viewport()
+        self._indicators.on_quote_band_click(event)
+
+    def _on_quote_band_drag(self, event) -> None:
+        self._indicators.on_quote_band_drag(event)
+
+    def _center_text_on_fraction(self, frac: float) -> None:
+        self._indicators.center_text_on_fraction(frac)
 
     def _request_density_redraw(self) -> None:
-        self._density_static_dirty = True
-        if self._density_draw_pending:
-            return
-        self._density_draw_pending = True
-
-        def go() -> None:
-            self._density_draw_pending = False
-            self._redraw_density_band_static()
-            self._update_density_viewport()
-
-        self.root.after(16, go)
+        self._indicators.request_density_redraw()
 
     def _update_density_viewport(self) -> None:
-        if not self.filter_active or not self._density_visible:
-            return
-        if self._density_viewport_pending:
-            return
-        self._density_viewport_pending = True
-
-        def go() -> None:
-            self._density_viewport_pending = False
-            width = max(20, self._density.winfo_width())
-            height = max(20, self._density.winfo_height())
-            first, last = self.text.yview()
-            y1 = int(first * height)
-            y2 = max(y1 + 6, int(last * height))
-            if self._density_viewport_id is None:
-                self._density_viewport_id = self._density.create_rectangle(
-                    0, y1, width - 1, y2, outline=ACCENT, width=1
-                )
-            else:
-                self._density.coords(self._density_viewport_id, 0, y1, width - 1, y2)
-                self._density.tag_raise(self._density_viewport_id)
-
-        self.root.after(16, go)
+        self._indicators.update_density_viewport()
 
     def _redraw_density_band_static(self) -> None:
-        if not self._density_static_dirty:
-            return
-        self._density_static_dirty = False
-        self._density.delete("all")
-        self._density_viewport_id = None
-        self._quote_dots.delete("all")
-        if not self.filter_active or not self._density_visible:
-            return
-
-        width = max(20, self._density.winfo_width())
-        height = max(20, self._density.winfo_height())
-
-        first, last = self.text.yview()
-        span = max(0.01, last - first)
-        pages = max(1, int(math.ceil(1.0 / span)))
-
-        page_counts: list[dict[str, int]] = [{"red": 0} for _ in range(pages)]
-
-        # Fallback: if display-line cache is empty but highlights exist, use
-        # cheap char-offset fractions so the sidebar never appears blank.
-        if not any(self._filter_hit_fracs.values()) and any(self._filter_hits.values()):
-            total_chars = max(1, self._text_char_length())
-            for level in ("red", "purple"):
-                fracs: list[float] = []
-                for ws, we in self._filter_hits.get(level, []):
-                    mid = (ws + we) // 2
-                    fracs.append(max(0.0, min(0.999999, mid / total_chars)))
-                self._filter_hit_fracs[level] = fracs
-
-        for level in ("red",):
-            for frac in self._filter_hit_fracs.get(level, []):
-                page_idx = min(pages - 1, max(0, int(frac * pages)))
-                page_counts[page_idx][level] += 1
-
-        max_total = max((sum(p.values()) for p in page_counts), default=0)
-        avail_w = max(1, width - 2)
-
-        for i, counts in enumerate(page_counts):
-            y1 = int((i * height) / pages)
-            y2 = max(y1 + 1, int(((i + 1) * height) / pages))
-
-            total = counts["red"]
-            if total <= 0 or max_total <= 0:
-                continue
-
-            row_w = max(1, int((total / max_total) * avail_w))
-            self._density.create_rectangle(1, y1, 1 + row_w, y2, fill=RED_FG, outline="")
-
-        if self._quote_band_visible:
-            qwidth = max(8, self._quote_dots.winfo_width())
-            qheight = max(20, self._quote_dots.winfo_height())
-            radius = max(2, min(3, qwidth // 3))
-            cx = qwidth // 2
-            for frac in self._filter_hit_fracs.get("purple", []):
-                cy = max(radius, min(qheight - radius, int(frac * qheight)))
-                self._quote_dots.create_oval(
-                    cx - radius,
-                    cy - radius,
-                    cx + radius,
-                    cy + radius,
-                    fill=PURPLE_BG,
-                    outline="",
-                )
+        self._indicators.redraw_density_band_static()
 
     def _redraw_lineno(self, *_args) -> None:
         """Repaint the line-number gutter to match the current scroll position."""
@@ -1993,8 +1851,49 @@ class EditorialApp:
             pass
 
     def _set_title(self, name: str) -> None:
-        self._lbl_filename.config(text=name)
         self.root.title(f"{APP_NAME} \u2014 {name}")
+
+    def _update_status_legend(self) -> None:
+        if not hasattr(self, "_legend_frame"):
+            return
+
+        for child in self._legend_frame.winfo_children():
+            child.destroy()
+
+        legend_map = {
+            EDITOR_MODE_FILTER: [(RED_FG, "Filter Words")],
+            EDITOR_MODE_WEAK: [(ORANGE_FG, "Weak / -ly")],
+            EDITOR_MODE_PUNCT: [
+                (PURPLE_BG, "Quote"),
+                (BLUE_FG, "Dash"),
+                (WHITE_FG, "Ellipsis"),
+                (RED_FG, "Loud"),
+            ],
+        }
+
+        items = legend_map.get(self._active_editor_mode, [])
+        if not items:
+            return
+
+        tk.Label(
+            self._legend_frame,
+            text="Key:",
+            bg="#11111b",
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+            padx=4,
+        ).pack(side=tk.LEFT)
+
+        for color, label in items:
+            tk.Label(
+                self._legend_frame,
+                text=f"  {label}  ",
+                bg=color,
+                fg=BG if color != WHITE_FG else BG,
+                font=("Segoe UI", 8, "bold"),
+                padx=4,
+                pady=1,
+            ).pack(side=tk.LEFT, padx=(4, 0))
 
     def _word_count_dialog(self) -> None:
         content = self.text.get("1.0", "end-1c")
@@ -2015,6 +1914,7 @@ class EditorialApp:
 
     def check_for_updates(self) -> None:
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title("Check for Updates")
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -2033,6 +1933,7 @@ class EditorialApp:
         pb = ttk.Progressbar(panel, mode="indeterminate", length=300)
         pb.pack(fill=tk.X, pady=(10, 0))
         pb.start(14)
+        self._center_popup(dlg)
 
         def finish(error: Exception | None, info: dict[str, object] | None) -> None:
             try:
@@ -2100,6 +2001,7 @@ class EditorialApp:
         has_update = self._is_newer_version(APP_VERSION, latest_version)
 
         dlg = tk.Toplevel(self.root)
+        dlg.withdraw()
         dlg.title("Editorial Updates")
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -2170,6 +2072,7 @@ class EditorialApp:
         release_url = str(info.get("url", RELEASES_URL)) or RELEASES_URL
         tk.Button(actions, text="Open Release Page", command=lambda: self._open_url(release_url), **bkw).pack(side=tk.LEFT)
         tk.Button(actions, text="Close", command=lambda: self._close_dialog(dlg), **bkw).pack(side=tk.RIGHT)
+        self._center_popup(dlg)
 
     def _close_dialog(self, dlg: tk.Toplevel) -> None:
         try:
@@ -2268,8 +2171,8 @@ class EditorialApp:
         if self._skip_filter_schedule_once:
             self._skip_filter_schedule_once = False
             return
-        if self.filter_active and self._should_schedule_filter_for_key(_event):
-            self._mark_filter_needs_update()
+        if self._should_schedule_filter_for_key(_event):
+            self._mark_active_mode_needs_update()
 
     def _on_copy_event(self, _event=None) -> None:
         self._skip_filter_schedule_once = True

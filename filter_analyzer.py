@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from typing import Callable
 
 import spacy
 
@@ -25,7 +26,8 @@ WEAK_MODIFIERS: set[str] = {
 }
 
 ADVERB_EXCLUDE: set[str] = {
-    "family", "friendly", "lovely", "likely", "only",
+    "belly", "family", "friendly", "jelly", "likely", "lily",
+    "lovely", "only", "silly", "tally", "valley",
 }
 
 
@@ -33,6 +35,10 @@ ADVERB_EXCLUDE: set[str] = {
 _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
 _FILTER_SET = set(FILTER_LEMMAS)
 _IGNORE_PHRASE_REGEXES = [re.compile(re.escape(phrase)) for phrase in IGNORE_PHRASES]
+_WORD_RE = re.compile(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?")
+_DASH_RE = re.compile(r"--|\s—|—\s|\s-\s")
+_ELLIPSIS_RE = re.compile(r"(?<!\.)\.{2}(?!\.)|(?<!\.)\.{4,}")
+_LOUD_PUNCT_RE = re.compile(r"!!+|\?!|!\?")
 
 _NLP = None
 
@@ -192,6 +198,7 @@ def analyze_filter_words(
     text: str,
     pov_character_names: set[str] | None = None,
     active_pov_pronouns: list[str] | None = None,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> list[tuple[int, int, str]]:
     """
     Return filter-word matches as (start, end, class) tuples.
@@ -204,6 +211,8 @@ def analyze_filter_words(
       - Dialogue is masked and never flagged.
     """
     if not text.strip():
+        if progress_callback is not None:
+            progress_callback(100)
         return []
 
     nlp = _get_nlp()
@@ -220,11 +229,19 @@ def analyze_filter_words(
 
     hits: list[tuple[int, int, str]] = []
     span_idx = 0
+    total_chars = max(1, len(text))
+    last_progress = -1
 
     for sent in doc.sents:
         for token in sent:
             tok_start = token.idx
             tok_end = token.idx + len(token.text)
+
+            if progress_callback is not None:
+                pct = max(1, min(100, int((tok_end / total_chars) * 100)))
+                if pct != last_progress:
+                    progress_callback(pct)
+                    last_progress = pct
 
             in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
             if in_dialogue:
@@ -253,6 +270,32 @@ def analyze_filter_words(
             else:
                 hits.append((tok_start, tok_end, "red"))
 
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
+
+    return hits
+
+
+def analyze_dialogue_mechanics(text: str) -> list[tuple[int, int, str]]:
+    """Return punctuation/dialogue hits as (start, end, class) tuples."""
+    if not text.strip():
+        return []
+
+    hits: list[tuple[int, int, str]] = []
+
+    for start, end in find_quote_issues(text):
+        hits.append((start, end, "quote"))
+
+    for match in _DASH_RE.finditer(text):
+        hits.append((match.start(), match.end(), "dash"))
+
+    for match in _ELLIPSIS_RE.finditer(text):
+        hits.append((match.start(), match.end(), "ellipsis"))
+
+    for match in _LOUD_PUNCT_RE.finditer(text):
+        hits.append((match.start(), match.end(), "loud"))
+
+    hits.sort(key=lambda item: item[0])
     return hits
 
 
@@ -293,35 +336,49 @@ def build_console_report(
     return lines
 
 
-def analyze_weak_modifiers(text: str) -> list[tuple[int, int, str]]:
+def analyze_weak_modifiers(
+    text: str,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, str]]:
     """Return weak-modifier hits as (start, end, class) tuples."""
     if not text.strip():
+        if progress_callback is not None:
+            progress_callback(100)
         return []
 
-    nlp = _get_nlp()
     dialogue_spans, _quote_errors = _scan_dialogue(text)
-    masked = _mask_dialogue_spans(text, dialogue_spans)
-    doc = nlp(masked)
 
     hits: list[tuple[int, int, str]] = []
     span_idx = 0
+    total_chars = max(1, len(text))
+    last_progress = -1
 
-    for token in doc:
-        tok_start = token.idx
-        tok_end = token.idx + len(token.text)
+    for match in _WORD_RE.finditer(text):
+        tok_start, tok_end = match.span()
 
         in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
         if in_dialogue:
+            if progress_callback is not None:
+                pct = max(1, min(100, int((tok_end / total_chars) * 100)))
+                if pct != last_progress:
+                    progress_callback(pct)
+                    last_progress = pct
             continue
 
-        low = token.text.lower().replace("\u2019", "'")
+        low = match.group(0).lower().replace("\u2019", "'")
         if low in WEAK_MODIFIERS:
             hits.append((tok_start, tok_end, "orange"))
-            continue
+        elif low.endswith("ly") and len(low) > 3 and low not in ADVERB_EXCLUDE:
+            hits.append((tok_start, tok_end, "orange"))
 
-        if low.endswith("ly") and len(low) > 3 and low not in ADVERB_EXCLUDE:
-            if token.pos_ in {"ADV", "ADJ"}:
-                hits.append((tok_start, tok_end, "orange"))
+        if progress_callback is not None:
+            pct = max(1, min(100, int((tok_end / total_chars) * 100)))
+            if pct != last_progress:
+                progress_callback(pct)
+                last_progress = pct
+
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
 
     return hits
 

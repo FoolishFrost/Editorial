@@ -25,6 +25,14 @@ WEAK_MODIFIERS: set[str] = {
     "very", "really", "just", "suddenly", "almost",
 }
 
+EMOTION_WORDS: set[str] = {
+    "angry", "anger", "furious", "irate", "mad", "rage", "enraged",
+    "sad", "sorrow", "depressed", "miserable", "gloomy", "heartbroken",
+    "terrified", "afraid", "fearful", "scared", "panic", "anxious",
+    "happy", "joyful", "glad", "delighted", "elated", "cheerful",
+    "jealous", "envy", "envious", "resentful",
+}
+
 ADVERB_EXCLUDE: set[str] = {
     "belly", "family", "friendly", "jelly", "likely", "lily",
     "lovely", "only", "silly", "tally", "valley",
@@ -256,6 +264,12 @@ def analyze_filter_words(
 
             in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
             if in_dialogue:
+                continue
+
+            # Tell-vs-show catcher: explicit emotion naming in narration.
+            # This runs before contextual filter-verb checks and shares the red class.
+            if token.lemma_.lower() in EMOTION_WORDS:
+                hits.append((tok_start, tok_end, "red"))
                 continue
 
             lemma = token.lemma_.lower()

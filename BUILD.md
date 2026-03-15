@@ -19,9 +19,11 @@ Watch Files (Build-Critical)
 
 Versioning
 ----------
-- Use semantic versioning: MAJOR.MINOR.PATCH.
-- For user-visible features, bump MINOR (example: 1.0.0 -> 1.1.0).
-- For bug fixes only, bump PATCH (example: 1.1.0 -> 1.1.1).
+- Every build must increment version; same-version rebuilds are not allowed.
+- Version levels for this project:
+  - Minor changes: bump third segment (X.Y.Z -> X.Y.Z+1), example: 1.1.0 -> 1.1.1
+  - Major changes: bump middle segment (X.Y.Z -> X.Y+1.0), example: 1.1.1 -> 1.2.0
+  - Massive app-changing releases: bump first segment (X.Y.Z -> X+1.0.0), example: 1.2.0 -> 2.0.0
 - Update versions in these files before packaging:
   - editorial.py -> APP_VERSION
   - scripts/package.ps1 -> default -Version parameter
@@ -74,6 +76,7 @@ Build Failure Rules
 -------------------
 - Treat build as failed if installer output version does not match requested X.Y.Z.
 - Treat build as failed if packaging script cannot update MyAppVersion.
+- Treat build as failed if requested version matches current installer version.
 - Do not proceed to publish until all Mandatory Build Verifications pass.
 
 GitHub Release

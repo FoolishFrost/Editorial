@@ -27,14 +27,14 @@ if (-not $match.Success) {
 
 $currentLine = $match.Value.Trim()
 if ($currentLine -eq $newVersionLine) {
-    Write-Host "Installer version already set to $Version"
-} else {
-    $updated = [Regex]::Replace($iss, $pattern, $newVersionLine, 1)
-    if ($updated -eq $iss) {
-        throw "Could not update MyAppVersion in $issPath"
-    }
-    Set-Content -Path $issPath -Value $updated -Encoding UTF8
+    throw "Version must be incremented before build. MyAppVersion is already $Version"
 }
+
+$updated = [Regex]::Replace($iss, $pattern, $newVersionLine, 1)
+if ($updated -eq $iss) {
+    throw "Could not update MyAppVersion in $issPath"
+}
+Set-Content -Path $issPath -Value $updated -Encoding UTF8
 
 Write-Host "[3/3] Building installer (if Inno Setup is installed)..."
 $isccCandidates = @(

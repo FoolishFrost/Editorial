@@ -53,14 +53,14 @@ _DIALOGUE_TAG_VERBS = (
     "explained|admitted|sighed|laughed|breathed"
 )
 _MISSING_TAG_PUNCT_RE = re.compile(
-    rf"[A-Za-z0-9](?P<quote>[\"\u201d])\s+(?:[a-z][A-Za-z'\u2019-]*\s+){{0,2}}(?:{_DIALOGUE_TAG_VERBS})\b"
+    rf"[A-Za-z0-9](?P<quote>[\"\u201d])[ \t]+(?:[a-z][A-Za-z'\u2019-]*[ \t]+){{0,2}}(?:{_DIALOGUE_TAG_VERBS})\b"
 )
 _UPPER_TAG_PRONOUN_RE = re.compile(
-    rf"[.!?\u2026][\"\u201d]\s+(?P<pronoun>He|She|They|We|You|It|I)\s+(?:{_DIALOGUE_TAG_VERBS})\b"
+    rf"[.!?\u2026][\"\u201d][ \t]+(?P<pronoun>He|She|They|We|You|It|I)[ \t]+(?:{_DIALOGUE_TAG_VERBS})\b"
 )
 _TAG_CHAIN_RE = re.compile(
-    rf"(?P<prepunct>[,.!?\u2026])(?P<quote>[\"\u201d])\s+"
-    rf"(?P<subject>He|She|They|We|You|It|I|he|she|they|we|you|it|i|[A-Z][a-z]+|[a-z][a-z]+)\s+"
+    rf"(?P<prepunct>[,.!?\u2026])(?P<quote>[\"\u201d])[ \t]+"
+    rf"(?P<subject>He|She|They|We|You|It|I|he|she|they|we|you|it|i|[A-Z][a-z]+|[a-z][a-z]+)[ \t]+"
     rf"(?P<verb>{_DIALOGUE_TAG_VERBS})\b"
 )
 _UPPER_PRONOUNS = {"He", "She", "They", "We", "You", "It", "I"}
@@ -431,9 +431,31 @@ def analyze_sentence_pacing(
             prev_ch = block[idx - 1] if idx > 0 else ""
             next_ch = block[idx + 1] if idx + 1 < len(block) else ""
 
-            # Ellipsis is treated as a pacing pause, not a sentence break.
+            # Ellipsis is treated as a pacing pause unless the final dot lands
+            # at a hard line break or block end, where authors often use it as
+            # terminal punctuation.
             if prev_ch == "." or next_ch == ".":
-                return False
+                run_start = idx
+                run_end = idx
+                while run_start > 0 and block[run_start - 1] == ".":
+                    run_start -= 1
+                while run_end + 1 < len(block) and block[run_end + 1] == ".":
+                    run_end += 1
+
+                if idx != run_end:
+                    return False
+
+                tail = run_end + 1
+                while tail < len(block) and block[tail] in '"\'”)]}!?,;:':
+                    tail += 1
+
+                saw_linebreak = False
+                while tail < len(block) and block[tail].isspace():
+                    if block[tail] in "\r\n":
+                        saw_linebreak = True
+                    tail += 1
+
+                return saw_linebreak or tail >= len(block)
 
             # Don't split decimals.
             if prev_ch.isdigit() and next_ch.isdigit():

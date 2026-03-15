@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox
 from typing import TYPE_CHECKING
@@ -137,20 +138,26 @@ class ModeSubsystem:
             return
 
         self._weak_mod_hits = []
-        step = 180
+        step = 600
         idx = 0
 
         def run_chunk() -> None:
-            nonlocal idx
+            nonlocal idx, step
             if run_id != self._weak_mod_run_seq:
                 return
-
+            t0 = time.perf_counter()
             end = min(idx + step, total)
+            flat_args: list[str] = []
             for ws, we, _cls in hits[idx:end]:
-                self.text.tag_add("filter_orange", f"1.0 + {ws}c", f"1.0 + {we}c")
+                flat_args.append(f"1.0 + {ws}c")
+                flat_args.append(f"1.0 + {we}c")
                 self._weak_mod_hits.append((ws, we))
+            if flat_args:
+                self.text.tk.call(self.text._w, "tag", "add", "filter_orange", *flat_args)
             idx = end
-
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(60, min(2000, int(step * 8.0 / elapsed_ms)))
             pct = 55 + int((idx / total) * 43)
             self._set_editor_progress(pct, "Weak")
             if idx < total:
@@ -177,14 +184,15 @@ class ModeSubsystem:
             total_display_lines = 1
         total_display_lines = max(1, total_display_lines)
         idx = 0
-        step = 180
+        step = 600
         prev_idx_str = "1.0"
         prev_disp = 0
 
         def run_chunk() -> None:
-            nonlocal idx, prev_idx_str, prev_disp
+            nonlocal idx, step, prev_idx_str, prev_disp
             if run_id != self._weak_mod_run_seq:
                 return
+            t0 = time.perf_counter()
             end = min(total, idx + step)
             for ws, we in self._weak_mod_hits[idx:end]:
                 mid = (ws + we) // 2
@@ -202,16 +210,18 @@ class ModeSubsystem:
                 prev_idx_str = idx_str
                 prev_disp = disp
                 self._weak_hit_fracs.append(max(0.0, min(0.999999, disp / total_display_lines)))
+
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(40, min(1500, int(step * 8.0 / elapsed_ms)))
             pct = 85 + int((idx / total) * 15)
             self._set_editor_progress(pct, "Weak")
-            if self._density_visible:
-                self._request_density_redraw()
             if idx < total:
                 self.root.after(1, run_chunk)
             else:
+                self._request_density_redraw()
                 done_callback()
-
         run_chunk()
 
     def _finalize_weak_mod_processing(self, run_id: int) -> None:
@@ -307,16 +317,26 @@ class ModeSubsystem:
             return
 
         idx = 0
-        step = 180
+        step = 600
 
         def run_chunk() -> None:
-            nonlocal idx
+            nonlocal idx, step
             if run_id != self._punct_run_seq:
                 return
+            t0 = time.perf_counter()
             end = min(total, idx + step)
+            by_tag: dict[str, list[str]] = {}
             for tag, ws, we in ops[idx:end]:
-                self.text.tag_add(tag, f"1.0 + {ws}c", f"1.0 + {we}c")
+                if tag not in by_tag:
+                    by_tag[tag] = []
+                by_tag[tag].append(f"1.0 + {ws}c")
+                by_tag[tag].append(f"1.0 + {we}c")
+            for t, flat in by_tag.items():
+                self.text.tk.call(self.text._w, "tag", "add", t, *flat)
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(60, min(2000, int(step * 8.0 / elapsed_ms)))
             pct = 55 + int((idx / total) * 30)
             self._set_editor_progress(pct, "Punct")
             if idx < total:
@@ -348,15 +368,16 @@ class ModeSubsystem:
         ops.sort(key=lambda x: (x[1] + x[2]) // 2)
 
         idx = 0
-        step = 400
+        step = 600
         total = len(ops)
         prev_idx_str = "1.0"
         prev_disp = 0
 
         def run_chunk() -> None:
-            nonlocal idx, prev_idx_str, prev_disp
+            nonlocal idx, step, prev_idx_str, prev_disp
             if run_id != self._punct_run_seq:
                 return
+            t0 = time.perf_counter()
             end = min(total, idx + step)
             for cls, ws, we in ops[idx:end]:
                 mid = (ws + we) // 2
@@ -376,12 +397,15 @@ class ModeSubsystem:
                 frac = max(0.0, min(0.999999, disp / total_display_lines))
                 self._punct_dot_fracs[cls].append(frac)
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(40, min(1500, int(step * 8.0 / elapsed_ms)))
             pct = 86 + int((idx / total) * 14)
             self._set_editor_progress(pct, "Punct")
-            self._request_density_redraw()
             if idx < total:
                 self.root.after(1, run_chunk)
             else:
+                self._request_density_redraw()
                 done_callback()
 
         run_chunk()
@@ -605,19 +629,27 @@ class ModeSubsystem:
             self.root.after(1, done_callback)
             return
 
-        step = 120
+        step = 600
         idx = 0
 
         def run_chunk() -> None:
-            nonlocal idx
+            nonlocal idx, step
+            t0 = time.perf_counter()
             end = min(idx + step, total)
+            by_tag: dict[str, list[str]] = {}
             for tag, ws, we in ops[idx:end]:
-                self.text.tag_add(tag, f"1.0 + {ws}c", f"1.0 + {we}c")
+                if tag not in by_tag:
+                    by_tag[tag] = []
+                by_tag[tag].append(f"1.0 + {ws}c")
+                by_tag[tag].append(f"1.0 + {we}c")
+            for t, flat in by_tag.items():
+                self.text.tk.call(self.text._w, "tag", "add", t, *flat)
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(60, min(2000, int(step * 8.0 / elapsed_ms)))
             pct = 56 + int((idx / total) * 28)
             self._set_filter_processing(pct)
-            if self._density_visible:
-                self._request_density_redraw()
             if idx < total:
                 self.root.after(1, run_chunk)
             else:
@@ -737,15 +769,16 @@ class ModeSubsystem:
             return
 
         idx = 0
-        step = 120
+        step = 600
         prev_idx_str = "1.0"
         prev_disp = 0
 
         def run_chunk() -> None:
-            nonlocal idx, prev_idx_str, prev_disp
+            nonlocal idx, step, prev_idx_str, prev_disp
             if build_seq != self._cache_build_seq:
                 return
 
+            t0 = time.perf_counter()
             end = min(total, idx + step)
             for lvl, mid in ops[idx:end]:
                 try:
@@ -769,14 +802,16 @@ class ModeSubsystem:
                 self._filter_hit_fracs[lvl].append(frac)
 
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(40, min(1500, int(step * 8.0 / elapsed_ms)))
             if show_progress:
                 pct = 86 + int((idx / total) * 12)
                 self._set_filter_processing(pct)
-            if self._density_visible:
-                self._request_density_redraw()
             if idx < total:
                 self.root.after(1, run_chunk)
             else:
+                self._request_density_redraw()
                 done_callback()
 
         run_chunk()

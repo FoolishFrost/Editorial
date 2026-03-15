@@ -18,7 +18,9 @@ Features
 from __future__ import annotations
 import json
 import os
+import sys
 import threading
+import time
 import math
 import re
 import bisect
@@ -33,6 +35,11 @@ from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
 from tkinter import ttk
 from spacy.lang.en.stop_words import STOP_WORDS
+
+# Keep local module imports stable when launched from outside workspace root.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR and _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
 
 from editorial_indicators import IndicatorSubsystem
 from editorial_modes import ModeSubsystem
@@ -287,6 +294,7 @@ class EditorialApp:
         exm.add_command(label="Highlighted RTF…", command=self.export_highlighted_rtf)
         exm.add_command(label="Tagged Text…", command=self.export_tagged_text)
         fm.add_cascade(label="Export", menu=exm)
+        self._export_menu = exm
         fm.add_separator()
         fm.add_command(label="Exit",      command=self.quit_app)
         bar.add_cascade(label="File", menu=fm)
@@ -1014,6 +1022,20 @@ class EditorialApp:
             except Exception:
                 pass
 
+        if hasattr(self, "_export_menu"):
+            try:
+                if mode == EDITOR_MODE_OFF:
+                    self._export_menu.entryconfig(0, state="disabled")
+                    self._export_menu.entryconfig(1, state="disabled")
+                elif mode == EDITOR_MODE_PACING:
+                    self._export_menu.entryconfig(0, state="normal")
+                    self._export_menu.entryconfig(1, state="disabled")
+                else:
+                    self._export_menu.entryconfig(0, state="normal")
+                    self._export_menu.entryconfig(1, state="normal")
+            except Exception:
+                pass
+
         if mode == EDITOR_MODE_FILTER:
             if not self._pov_label.winfo_manager():
                 self._pov_label.pack(side=tk.LEFT, padx=(8, 6))
@@ -1681,18 +1703,26 @@ class EditorialApp:
             return
 
         idx = 0
-        step = 140
+        step = 600
 
         def run_chunk() -> None:
-            nonlocal idx
+            nonlocal idx, step
             if run_id != self._mode_wrapper_run_seq:
                 return
+            t0 = time.perf_counter()
             end = min(total, idx + step)
+            flat_args: list[str] = []
             for ws, we in ranges[idx:end]:
                 if we <= ws:
                     continue
-                self.text.tag_add(tag_name, f"1.0 + {ws}c", f"1.0 + {we}c")
+                flat_args.append(f"1.0 + {ws}c")
+                flat_args.append(f"1.0 + {we}c")
+            if flat_args:
+                self.text.tk.call(self.text._w, "tag", "add", tag_name, *flat_args)
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(60, min(2000, int(step * 8.0 / elapsed_ms)))
             pct = 56 + int((idx / total) * 42)
             self._set_editor_progress(pct, mode_label)
             if idx < total:
@@ -1732,15 +1762,16 @@ class EditorialApp:
 
         fracs: list[float] = []
         idx = 0
-        step = 220
+        step = 600
         prev_idx_str = "1.0"
         prev_disp = 0
         total = len(mids)
 
         def run_chunk() -> None:
-            nonlocal idx, prev_idx_str, prev_disp
+            nonlocal idx, step, prev_idx_str, prev_disp
             if run_id != self._mode_wrapper_run_seq:
                 return
+            t0 = time.perf_counter()
             end = min(total, idx + step)
             for mid in mids[idx:end]:
                 try:
@@ -1759,6 +1790,9 @@ class EditorialApp:
                 fracs.append(max(0.0, min(0.999999, disp / total_display_lines)))
 
             idx = end
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                step = max(40, min(1500, int(step * 8.0 / elapsed_ms)))
             if idx < total:
                 self.root.after(1, run_chunk)
             else:

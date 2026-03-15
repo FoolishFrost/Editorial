@@ -294,6 +294,7 @@ class EditorialApp:
         tm.add_command(label="Refresh", command=self._on_filter_refresh_clicked)
         self._tools_refresh_index = int(tm.index("end"))
         tm.add_command(label="Set POV Names…", command=self.show_pov_names_dialog)
+        tm.add_command(label="Typography Standardizer", command=self.standardize_typography)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
@@ -1316,6 +1317,82 @@ class EditorialApp:
     def paste(self) -> None:
         self.text.event_generate("<<Paste>>")
         self._mark_active_mode_needs_update()
+
+    def standardize_typography(self) -> None:
+        if self._is_editor_processing():
+            return
+
+        text = self.text.get("1.0", "end-1c")
+        normalized, changes = self._standardize_typography_text(text)
+        if changes == 0:
+            messagebox.showinfo("Typography Standardizer", "No typography changes were needed.")
+            return
+
+        self.text.edit_separator()
+        self.text.delete("1.0", tk.END)
+        self.text.insert("1.0", normalized)
+        self.text.edit_separator()
+        self._update_status()
+        self._mark_active_mode_needs_update()
+        messagebox.showinfo("Typography Standardizer", f"Applied {changes} typography normalization(s).")
+
+    def _standardize_typography_text(self, text: str) -> tuple[str, int]:
+        working = text
+        total_changes = 0
+
+        # Normalize common draft dash patterns to an unspaced em dash.
+        working, n = re.subn(r"--+", "\u2014", working)
+        total_changes += n
+        working, n = re.subn(r"\s+[\u2014-]\s+", "\u2014", working)
+        total_changes += n
+
+        # Normalize sloppy ellipses to the single ellipsis character.
+        working, n = re.subn(r"(?<!\.)\.\.\.(?!\.)", "\u2026", working)
+        total_changes += n
+        working, n = re.subn(r"(?<!\.)\.{2}(?!\.)|(?<!\.)\.{4,}", "\u2026", working)
+        total_changes += n
+
+        smart = self._smarten_straight_quotes(working)
+        if smart != working:
+            total_changes += 1
+        return smart, total_changes
+
+    def _smarten_straight_quotes(self, text: str) -> str:
+        # First normalize smart quotes to straight quotes so conversion is deterministic.
+        src = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+        out: list[str] = []
+        open_double = True
+        open_single = True
+
+        for idx, ch in enumerate(src):
+            prev_ch = src[idx - 1] if idx > 0 else ""
+            next_ch = src[idx + 1] if idx + 1 < len(src) else ""
+
+            if ch == '"':
+                if open_double:
+                    out.append("\u201c")
+                else:
+                    out.append("\u201d")
+                open_double = not open_double
+                continue
+
+            if ch == "'":
+                # Apostrophe in words: don't treat as quote pair delimiter.
+                if prev_ch.isalpha() and next_ch.isalpha():
+                    out.append("\u2019")
+                    continue
+
+                if open_single:
+                    out.append("\u2018")
+                else:
+                    out.append("\u2019")
+                open_single = not open_single
+                continue
+
+            out.append(ch)
+
+        return "".join(out)
+
     def select_all(self) -> None:
         self.text.tag_add(tk.SEL, "1.0", tk.END)
         self.text.mark_set(tk.INSERT, "end-1c")

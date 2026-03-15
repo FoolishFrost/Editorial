@@ -11,6 +11,21 @@ When To Run
 - After build artifacts are created and validated (see BUILD.md).
 - When code/docs changes are ready for public release.
 
+Watch Files (Publish-Critical)
+------------------------------
+- README.md
+  - Must point to current release tag and asset URLs.
+- RELEASE_NOTES_vX.Y.Z.md
+  - Must include Simple Change Notes (plain language bullets).
+- publish.md
+  - Keep this runbook current after each release.
+- BUILD.md
+  - Ensure build verification rules still match actual process.
+- .gitignore
+  - release/ should remain ignored unless intentionally tracking binaries.
+- installer/Editorial.iss
+  - Installer metadata should mirror About branding details where practical.
+
 Preflight Checklist
 -------------------
 - Confirm app version is finalized and consistent:
@@ -39,6 +54,7 @@ Step 2: Commit And Push Code Changes
 - Push branch to GitHub.
 - Create and push annotated tag:
   - vX.Y.Z
+- Keep release artifacts out of commit scope unless explicitly intended.
 
 Acceptance criteria:
 - GitHub branch shows latest commit.
@@ -56,18 +72,30 @@ Step 3: Publish GitHub Release
 - Upload artifacts:
   - Installer EXE
   - Portable EXE/ZIP as applicable
+- If using GitHub CLI:
+  - Use release field name "name" when querying JSON output.
+  - Do not use "title" as a JSON field in gh release view.
 
 Acceptance criteria:
 - Release page is live.
 - Download links work.
 - Asset filenames reflect version.
 - Simple change notes are present and readable by non-technical users.
+- Release includes both expected assets when available:
+  - Editorial-Setup-X.Y.Z.exe
+  - Editorial-X.Y.Z-portable.zip
 
 Step 4: Update Wiki Manual
 --------------------------
 - Update user manual pages in the GitHub Wiki.
 - Ensure any new features/menu items are documented with screenshots where useful.
 - Verify install/update instructions match current release assets.
+- Ensure troubleshooting includes current guidance for:
+  - Windows SmartScreen prompts
+  - Chrome/Edge blocked-download override flow
+- If pushing via a cloned wiki repo, ensure git identity is configured in that repo before commit:
+  - user.name
+  - user.email
 
 Minimum wiki pages to review each release:
 - Home / Overview
@@ -99,6 +127,10 @@ Check these surfaces end-to-end:
 - README download links
 - Wiki manual pages
 - In-app update checker behavior (tag/version + asset listing)
+- Verify repository default branch shows the release commit.
+- Verify release tag resolves to the intended commit.
+- Verify installer metadata matches intended branding (publisher/contact/update URL).
+- Verify public docs do not imply unsigned builds will show verified publisher identity.
 
 Release is complete only when all checks pass.
 
@@ -106,6 +138,7 @@ Post-Publish Cleanup
 --------------------
 - Optionally remove old local release artifacts that are superseded.
 - Log any follow-up tasks discovered during publish audit.
+- Remove temporary wiki clone folders created during publish automation.
 
 Quick Operator Prompt
 ---------------------

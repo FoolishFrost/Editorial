@@ -20,11 +20,21 @@ $issPath = Join-Path $repo "installer\Editorial.iss"
 $iss = Get-Content $issPath -Raw
 $newVersionLine = "#define MyAppVersion `"$Version`""
 $pattern = '(?m)^\s*#define\s+MyAppVersion\s+"[^"]*"\s*$'
-$updated = [Regex]::Replace($iss, $pattern, $newVersionLine, 1)
-if ($updated -eq $iss) {
-    throw "Could not update MyAppVersion in $issPath"
+$match = [Regex]::Match($iss, $pattern)
+if (-not $match.Success) {
+    throw "Could not find MyAppVersion define in $issPath"
 }
-Set-Content -Path $issPath -Value $updated -Encoding UTF8
+
+$currentLine = $match.Value.Trim()
+if ($currentLine -eq $newVersionLine) {
+    Write-Host "Installer version already set to $Version"
+} else {
+    $updated = [Regex]::Replace($iss, $pattern, $newVersionLine, 1)
+    if ($updated -eq $iss) {
+        throw "Could not update MyAppVersion in $issPath"
+    }
+    Set-Content -Path $issPath -Value $updated -Encoding UTF8
+}
 
 Write-Host "[3/3] Building installer (if Inno Setup is installed)..."
 $isccCandidates = @(

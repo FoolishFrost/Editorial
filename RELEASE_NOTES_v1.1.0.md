@@ -8,6 +8,8 @@ Simple Change Notes
 - Update popup now lists release binaries with quick open links.
 - About dialog now shows app version plus git commit/tag when available.
 - Improved analyzer and n-gram performance for smoother large-file use.
+- Installer now carries richer publisher/contact metadata for a clearer install experience.
+- Wiki now includes SmartScreen and browser download-unblock steps (Chrome/Edge).
 
 User-Facing Changes
 -------------------
@@ -20,6 +22,7 @@ User-Facing Changes
 Fixes
 -----
 - Fixed installer version propagation in packaging script so requested version is applied reliably.
+- Packaging script now supports same-version rebuilds without failing when version already matches.
 
 Known Limitations
 -----------------

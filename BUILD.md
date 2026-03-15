@@ -4,6 +4,19 @@ Editorial Build And Release Rules
 Use this file as the source of truth for build/release workflow.
 If asked to "build as per BUILD.md", follow these steps exactly.
 
+Watch Files (Build-Critical)
+----------------------------
+- editorial.py
+  - APP_VERSION must match release target.
+- scripts/package.ps1
+  - Default Version should match current target.
+  - Installer-version replacement must succeed (fail build if not).
+- installer/Editorial.iss
+  - #define MyAppVersion must reflect target version after packaging step.
+  - Branding metadata should stay populated (publisher/contact/version info fields).
+- .gitignore
+  - Keep release/ ignored so local binaries are not accidentally committed.
+
 Versioning
 ----------
 - Use semantic versioning: MAJOR.MINOR.PATCH.
@@ -32,6 +45,36 @@ Build Steps (Windows)
 3. Verify outputs:
    - dist/Editorial.exe
    - release/Editorial-Setup-X.Y.Z.exe (if Inno Setup is installed)
+   - release/Editorial-X.Y.Z-portable.zip (if portable package is needed for release links)
+
+Mandatory Build Verifications
+-----------------------------
+- Confirm installer version was actually updated:
+  - installer/Editorial.iss contains #define MyAppVersion "X.Y.Z".
+- Confirm installer filename matches target version:
+  - release/Editorial-Setup-X.Y.Z.exe
+- Confirm app/runtime version values align:
+  - editorial.py APP_VERSION == X.Y.Z
+  - scripts/package.ps1 default Version == X.Y.Z
+- Confirm installer branding metadata is present in installer/Editorial.iss:
+  - AppPublisher
+  - AppContact
+  - AppSupportURL
+  - AppUpdatesURL
+  - VersionInfoCompany
+  - VersionInfoProductName
+
+Installer Branding And Security Note
+------------------------------------
+- Installer metadata branding is encouraged and user-visible in installer/app properties.
+- This does not replace Windows publisher verification.
+- SmartScreen/UAC verified publisher name requires Authenticode code signing.
+
+Build Failure Rules
+-------------------
+- Treat build as failed if installer output version does not match requested X.Y.Z.
+- Treat build as failed if packaging script cannot update MyAppVersion.
+- Do not proceed to publish until all Mandatory Build Verifications pass.
 
 GitHub Release
 --------------
@@ -46,3 +89,6 @@ Update Checker Contract
 - The in-app "Check for Updates" uses GitHub latest release API.
 - It compares latest tag version with APP_VERSION.
 - It should list release assets so users can open binary download links.
+- Keep both expected assets in release when possible:
+  - Editorial-Setup-X.Y.Z.exe
+  - Editorial-X.Y.Z-portable.zip

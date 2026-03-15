@@ -24,6 +24,7 @@ POV_PRONOUNS: list[str] = ["i", "he", "she", "we", "they"]
 # Match quote characters used for dialogue boundaries.
 _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
 _FILTER_SET = set(FILTER_LEMMAS)
+_IGNORE_PHRASE_REGEXES = [re.compile(re.escape(phrase)) for phrase in IGNORE_PHRASES]
 
 _NLP = None
 
@@ -119,19 +120,23 @@ def _scan_dialogue(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, in
     return spans, errors
 
 
-def _mask_dialogue(text: str) -> str:
+def _mask_dialogue_spans(text: str, dialogue_spans: list[tuple[int, int]]) -> str:
     """
     Replace dialogue with spaces so sentence/char offsets are preserved while
     ensuring words inside quotes are never flagged.
     """
 
     chars = list(text)
-    dialogue_spans, _quote_errors = _scan_dialogue(text)
     for start, end in dialogue_spans:
         for i in range(start, end):
             if chars[i] != "\n":
                 chars[i] = " "
     return "".join(chars)
+
+
+def _mask_dialogue(text: str) -> str:
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    return _mask_dialogue_spans(text, dialogue_spans)
 
 
 def _find_dialogue_spans(text: str) -> list[tuple[int, int]]:
@@ -168,8 +173,8 @@ def _token_overlaps_ignored_phrase(token_start: int, token_end: int, sent) -> bo
     rel_start = token_start - sent.start_char
     rel_end = token_end - sent.start_char
 
-    for phrase in IGNORE_PHRASES:
-        for m in re.finditer(re.escape(phrase), sent_lower):
+    for phrase_re in _IGNORE_PHRASE_REGEXES:
+        for m in phrase_re.finditer(sent_lower):
             if rel_start < m.end() and rel_end > m.start():
                 return True
     return False
@@ -194,8 +199,8 @@ def analyze_filter_words(
         return []
 
     nlp = _get_nlp()
-    dialogue_spans = _find_dialogue_spans(text)
-    masked = _mask_dialogue(text)
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    masked = _mask_dialogue_spans(text, dialogue_spans)
     doc = nlp(masked)
 
     pov_names = {n.lower() for n in (pov_character_names or set())}
@@ -227,11 +232,10 @@ def analyze_filter_words(
             if _token_overlaps_ignored_phrase(tok_start, tok_end, sent):
                 continue
 
-            subj = None
-            for child in token.children:
-                if child.dep_ == "nsubj" and child.head == token:
-                    subj = child
-                    break
+            subj = next(
+                (child for child in token.children if child.dep_ == "nsubj" and child.head == token),
+                None,
+            )
 
             if subj is None or subj.text.lower() not in pov_subjects:
                 continue
@@ -254,7 +258,8 @@ def build_console_report(
         return []
 
     nlp = _get_nlp()
-    masked = _mask_dialogue(text)
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    masked = _mask_dialogue_spans(text, dialogue_spans)
     doc = nlp(masked)
     hits = analyze_filter_words(text, pov_character_names, active_pov_pronouns)
 

@@ -16,7 +16,7 @@ One-command packaging
 Run:
 
 powershell
-.\scripts\package.ps1 -Version 1.0.0
+.\scripts\package.ps1 -Version 1.1.0
 
 What it does:
 1. Builds dist\Editorial.exe using PyInstaller
@@ -40,3 +40,4 @@ Notes
 -----
 - This packaging is unsigned.
 - Unsigned installers/executables may trigger SmartScreen warnings.
+- Canonical release workflow and versioning rules now live in BUILD.md.

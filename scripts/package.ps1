@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.1.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,8 +18,13 @@ pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-
 Write-Host "[2/3] Updating installer version to $Version..."
 $issPath = Join-Path $repo "installer\Editorial.iss"
 $iss = Get-Content $issPath -Raw
-$iss = [Regex]::Replace($iss, '(?m)^#define MyAppVersion ".*"$', "#define MyAppVersion `"$Version`"")
-Set-Content -Path $issPath -Value $iss -Encoding UTF8
+$newVersionLine = "#define MyAppVersion `"$Version`""
+$pattern = '(?m)^\s*#define\s+MyAppVersion\s+"[^"]*"\s*$'
+$updated = [Regex]::Replace($iss, $pattern, $newVersionLine, 1)
+if ($updated -eq $iss) {
+    throw "Could not update MyAppVersion in $issPath"
+}
+Set-Content -Path $issPath -Value $updated -Encoding UTF8
 
 Write-Host "[3/3] Building installer (if Inno Setup is installed)..."
 $isccCandidates = @(

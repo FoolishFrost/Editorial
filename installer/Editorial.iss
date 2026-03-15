@@ -2,7 +2,7 @@
 ; Build with: ISCC installer\Editorial.iss
 
 #define MyAppName "Editorial"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Foolish Designs"
 #define MyAppSupportEmail "johnbowden@foolishdesigns.com"
 #define MyAppExeName "Editorial.exe"
@@ -40,6 +40,8 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+
 
 
 

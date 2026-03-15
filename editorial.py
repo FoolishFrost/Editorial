@@ -22,7 +22,11 @@ import threading
 import math
 import re
 import ctypes
+import subprocess
+import webbrowser
 from collections import Counter
+from urllib import error as urlerror
+from urllib import request as urlrequest
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
@@ -32,10 +36,14 @@ from spacy.lang.en.stop_words import STOP_WORDS
 from filter_analyzer import analyze_filter_words, find_quote_issues
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
+GITHUB_REPO = "FoolishFrost/Editorial"
+WIKI_URL = "https://github.com/FoolishFrost/Editorial/wiki"
+RELEASES_URL = "https://github.com/FoolishFrost/Editorial/releases"
+LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 # ---------------------------------------------------------------------------
 # Colour palette  (Catppuccin Mocha-inspired dark theme)
@@ -193,6 +201,9 @@ class EditorialApp:
 
         # Help ---------------------------------------------------------------
         hm = tk.Menu(bar, **cfg)
+        hm.add_command(label="Docs", command=self.open_docs)
+        hm.add_command(label="Check for Updates", command=self.check_for_updates)
+        hm.add_separator()
         hm.add_command(label="About Editorial", command=self.show_about_dialog)
         bar.add_cascade(label="Help", menu=hm)
 
@@ -626,7 +637,7 @@ class EditorialApp:
         pov_names = self._get_active_pov_names()
 
         def task():
-            ranges = self._compute_export_ranges(text, active_pov, pov_names)
+            ranges = self._get_export_ranges(text, active_pov, pov_names)
             rtf = self._build_rtf_export(text, ranges)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(rtf)
@@ -645,7 +656,7 @@ class EditorialApp:
         pov_names = self._get_active_pov_names()
 
         def task():
-            ranges = self._compute_export_ranges(text, active_pov, pov_names)
+            ranges = self._get_export_ranges(text, active_pov, pov_names)
             tagged = self._build_tagged_export(text, ranges)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
@@ -763,21 +774,14 @@ class EditorialApp:
                     self.root.after(0, lambda: finish(None, {"single": [], "pairs": [], "triples": []}))
                     return
 
-                uni: Counter[str] = Counter()
-                bi: Counter[tuple[str, str]] = Counter()
-                tri: Counter[tuple[str, str, str]] = Counter()
+                self.root.after(0, lambda: set_progress(10))
+                uni: Counter[str] = Counter(tokens)
 
-                self.root.after(0, lambda: set_progress(3))
-                chunk = 2000
-                for i, tok in enumerate(tokens):
-                    uni[tok] += 1
-                    if i + 1 < total:
-                        bi[(tok, tokens[i + 1])] += 1
-                    if i + 2 < total:
-                        tri[(tok, tokens[i + 1], tokens[i + 2])] += 1
-                    if i % chunk == 0:
-                        pct = 3 + int((i / total) * 90)
-                        self.root.after(0, lambda p=pct: set_progress(p))
+                self.root.after(0, lambda: set_progress(45))
+                bi: Counter[tuple[str, str]] = Counter(zip(tokens, tokens[1:]))
+
+                self.root.after(0, lambda: set_progress(75))
+                tri: Counter[tuple[str, str, str]] = Counter(zip(tokens, tokens[1:], tokens[2:]))
 
                 top_single = [(w, c) for w, c in uni.most_common(10)]
                 top_pairs = [(" ".join(k), c) for k, c in bi.most_common(10)]
@@ -803,6 +807,17 @@ class EditorialApp:
             for ws, we in self._filter_hits.get(level, []):
                 ranges.append((ws, we, level))
         return sorted(ranges, key=lambda x: x[0])
+
+    def _get_export_ranges(
+        self,
+        text: str,
+        active_pov: list[str],
+        pov_names: set[str] | None = None,
+    ) -> list[tuple[int, int, str]]:
+        cached = None if self._filter_update_needed else self._get_cached_export_ranges()
+        if cached is not None:
+            return cached
+        return self._compute_export_ranges(text, active_pov, pov_names)
 
     def _compute_export_ranges(
         self,
@@ -1132,6 +1147,7 @@ class EditorialApp:
     def _clear_filter(self) -> None:
         for tag in ("filter_red", "filter_purple"):
             self.text.tag_remove(tag, "1.0", tk.END)
+        self._filter_hits = {"red": [], "purple": []}
         self._filter_hits_lines = {"red": [], "purple": []}
         self._filter_hit_fracs = {"red": [], "purple": []}
         if hasattr(self, "_quote_dots"):
@@ -1953,13 +1969,253 @@ class EditorialApp:
             f"Paragraphs:  {paras}",
         )
 
+    def open_docs(self) -> None:
+        self._open_url(WIKI_URL)
+
+    def check_for_updates(self) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Check for Updates")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.configure(bg=BG_SURFACE)
+        dlg.grab_set()
+
+        panel = tk.Frame(dlg, bg=BG_SURFACE, padx=14, pady=12)
+        panel.pack(fill=tk.BOTH, expand=True)
+        tk.Label(
+            panel,
+            text="Checking GitHub releases...",
+            bg=BG_SURFACE,
+            fg=TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w")
+        pb = ttk.Progressbar(panel, mode="indeterminate", length=300)
+        pb.pack(fill=tk.X, pady=(10, 0))
+        pb.start(14)
+
+        def finish(error: Exception | None, info: dict[str, object] | None) -> None:
+            try:
+                pb.stop()
+                dlg.grab_release()
+                dlg.destroy()
+            except Exception:
+                pass
+
+            if error is not None:
+                messagebox.showerror("Update Check", str(error))
+                return
+            if info is not None:
+                self._show_update_dialog(info)
+
+        def worker() -> None:
+            try:
+                info = self._fetch_latest_release_info()
+                self.root.after(0, lambda: finish(None, info))
+            except Exception as exc:
+                self.root.after(0, lambda: finish(exc, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fetch_latest_release_info(self) -> dict[str, object]:
+        req = urlrequest.Request(
+            LATEST_RELEASE_API,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+            },
+        )
+        try:
+            with urlrequest.urlopen(req, timeout=12) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urlerror.URLError as exc:
+            raise RuntimeError("Unable to contact GitHub. Check your internet connection and try again.") from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unexpected response from GitHub releases API.")
+
+        assets: list[dict[str, object]] = []
+        raw_assets = payload.get("assets", [])
+        if isinstance(raw_assets, list):
+            for item in raw_assets:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", ""))
+                url = str(item.get("browser_download_url", ""))
+                size = int(item.get("size", 0) or 0)
+                if name and url:
+                    assets.append({"name": name, "url": url, "size": size})
+
+        return {
+            "tag": str(payload.get("tag_name", "")).strip(),
+            "title": str(payload.get("name", "")).strip(),
+            "published": str(payload.get("published_at", "")).strip(),
+            "url": str(payload.get("html_url", RELEASES_URL)).strip() or RELEASES_URL,
+            "assets": assets,
+        }
+
+    def _show_update_dialog(self, info: dict[str, object]) -> None:
+        latest_tag = str(info.get("tag", "")).strip()
+        latest_version = latest_tag.lstrip("vV")
+        has_update = self._is_newer_version(APP_VERSION, latest_version)
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Editorial Updates")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.configure(bg=BG_SURFACE)
+        dlg.grab_set()
+
+        panel = tk.Frame(dlg, bg=BG_SURFACE, padx=14, pady=12)
+        panel.pack(fill=tk.BOTH, expand=True)
+
+        status_text = "Update available" if has_update else "You are up to date"
+        status_color = GREEN_FG if has_update else ACCENT
+        tk.Label(panel, text=status_text, bg=BG_SURFACE, fg=status_color, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(panel, text=f"Current version: {APP_VERSION}", bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w", pady=(4, 0))
+        tk.Label(panel, text=f"Latest release: {latest_tag or 'Unknown'}", bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w")
+
+        title = str(info.get("title", "")).strip()
+        published = str(info.get("published", "")).strip()
+        if title:
+            tk.Label(panel, text=f"Release: {title}", bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 0))
+        if published:
+            tk.Label(panel, text=f"Published: {published[:10]}", bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w")
+
+        tk.Label(panel, text="Available binaries:", bg=BG_SURFACE, fg=TEXT, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(10, 4))
+
+        assets_frame = tk.Frame(panel, bg=BG_SURFACE)
+        assets_frame.pack(fill=tk.X)
+
+        bkw = dict(
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=3,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        )
+
+        assets = info.get("assets", [])
+        if isinstance(assets, list) and assets:
+            for item in assets:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", ""))
+                url = str(item.get("url", ""))
+                size = int(item.get("size", 0) or 0)
+                if not name or not url:
+                    continue
+
+                row = tk.Frame(assets_frame, bg=BG_SURFACE)
+                row.pack(fill=tk.X, pady=2)
+                tk.Label(
+                    row,
+                    text=f"{name} ({self._format_bytes(size)})",
+                    bg=BG_SURFACE,
+                    fg=TEXT,
+                    font=("Segoe UI", 9),
+                    anchor="w",
+                ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                tk.Button(row, text="Open", command=lambda target=url: self._open_url(target), **bkw).pack(side=tk.RIGHT)
+        else:
+            tk.Label(assets_frame, text="No binaries were listed for the latest release.", bg=BG_SURFACE, fg=TEXT_SUBTLE, font=("Segoe UI", 9)).pack(anchor="w")
+
+        actions = tk.Frame(panel, bg=BG_SURFACE)
+        actions.pack(fill=tk.X, pady=(12, 0))
+        release_url = str(info.get("url", RELEASES_URL)) or RELEASES_URL
+        tk.Button(actions, text="Open Release Page", command=lambda: self._open_url(release_url), **bkw).pack(side=tk.LEFT)
+        tk.Button(actions, text="Close", command=lambda: self._close_dialog(dlg), **bkw).pack(side=tk.RIGHT)
+
+    def _close_dialog(self, dlg: tk.Toplevel) -> None:
+        try:
+            dlg.grab_release()
+            dlg.destroy()
+        except Exception:
+            pass
+
+    def _open_url(self, url: str) -> None:
+        try:
+            webbrowser.open_new_tab(url)
+        except Exception as exc:
+            messagebox.showerror("Open Link", str(exc))
+
+    def _format_bytes(self, size: int) -> str:
+        value = float(max(0, size))
+        units = ["B", "KB", "MB", "GB"]
+        idx = 0
+        while value >= 1024 and idx < len(units) - 1:
+            value /= 1024.0
+            idx += 1
+        if idx == 0:
+            return f"{int(value)} {units[idx]}"
+        return f"{value:.1f} {units[idx]}"
+
+    def _parse_version_tuple(self, version: str) -> tuple[int, ...]:
+        parts = re.findall(r"\d+", version)
+        if not parts:
+            return ()
+        return tuple(int(p) for p in parts[:3])
+
+    def _is_newer_version(self, current: str, latest: str) -> bool:
+        cur = self._parse_version_tuple(current)
+        lat = self._parse_version_tuple(latest)
+        if not cur or not lat:
+            return False
+        n = max(len(cur), len(lat))
+        cur = cur + (0,) * (n - len(cur))
+        lat = lat + (0,) * (n - len(lat))
+        return lat > cur
+
+    def _get_git_metadata(self) -> tuple[str | None, str | None]:
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        if not os.path.isdir(os.path.join(repo_dir, ".git")):
+            return None, None
+
+        commit: str | None = None
+        tag: str | None = None
+
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=repo_dir,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                text=True,
+            ).strip()
+        except Exception:
+            commit = None
+
+        try:
+            tag = subprocess.check_output(
+                ["git", "describe", "--tags", "--exact-match"],
+                cwd=repo_dir,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                text=True,
+            ).strip()
+        except Exception:
+            tag = None
+
+        return commit or None, tag or None
+
     def show_about_dialog(self) -> None:
+        commit, tag = self._get_git_metadata()
+        git_lines = ""
+        if commit:
+            git_lines += f"\nGit commit: {commit}"
+        if tag:
+            git_lines += f"\nGit tag: {tag}"
+
         messagebox.showinfo(
             f"About {APP_NAME}",
             f"{APP_NAME} {APP_VERSION}\n"
             f"Created by {COMPANY_NAME}\n\n"
             f"Creator: {CREATOR_NAME}\n"
-            f"Contact: {SUPPORT_EMAIL}",
+            f"Contact: {SUPPORT_EMAIL}{git_lines}",
         )
 
     # -------------------------------------------------------- event handlers

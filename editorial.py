@@ -735,7 +735,7 @@ class EditorialApp:
             "well", "just", "really", "very", "quite", "actually",
             "basically", "literally", "perhaps", "maybe",
         }
-        blocked_words = set(STOP_WORDS)
+        blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
         blocked_words.update(filler_words)
 
         def set_progress(val: int) -> None:
@@ -764,10 +764,12 @@ class EditorialApp:
 
         def worker() -> None:
             try:
-                raw_tokens = [m.group(0) for m in token_re.finditer(text.lower())]
+                # Normalize smart apostrophes so contractions stay intact.
+                ngram_text = text.lower().replace("\u2019", "'")
+                raw_tokens = [m.group(0) for m in token_re.finditer(ngram_text)]
                 tokens = [
                     tok for tok in raw_tokens
-                    if tok.isalpha() and len(tok) > 1 and tok not in blocked_words
+                    if tok.replace("'", "").isalpha() and len(tok) > 1 and tok not in blocked_words
                 ]
                 total = len(tokens)
                 if total == 0:

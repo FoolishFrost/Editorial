@@ -20,6 +20,14 @@ IGNORE_PHRASES: list[str] = [
 
 POV_PRONOUNS: list[str] = ["i", "he", "she", "we", "they"]
 
+WEAK_MODIFIERS: set[str] = {
+    "very", "really", "just", "suddenly", "almost",
+}
+
+ADVERB_EXCLUDE: set[str] = {
+    "family", "friendly", "lovely", "likely", "only",
+}
+
 
 # Match quote characters used for dialogue boundaries.
 _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
@@ -283,6 +291,39 @@ def build_console_report(
                 marked = sent.text[:rel_start] + "**" + sent.text[rel_start:rel_end] + "**" + sent.text[rel_end:]
                 lines.append(f"[{sent_no}] - [{rule}]: \"{marked.strip()}\"")
     return lines
+
+
+def analyze_weak_modifiers(text: str) -> list[tuple[int, int, str]]:
+    """Return weak-modifier hits as (start, end, class) tuples."""
+    if not text.strip():
+        return []
+
+    nlp = _get_nlp()
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    masked = _mask_dialogue_spans(text, dialogue_spans)
+    doc = nlp(masked)
+
+    hits: list[tuple[int, int, str]] = []
+    span_idx = 0
+
+    for token in doc:
+        tok_start = token.idx
+        tok_end = token.idx + len(token.text)
+
+        in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
+        if in_dialogue:
+            continue
+
+        low = token.text.lower().replace("\u2019", "'")
+        if low in WEAK_MODIFIERS:
+            hits.append((tok_start, tok_end, "orange"))
+            continue
+
+        if low.endswith("ly") and len(low) > 3 and low not in ADVERB_EXCLUDE:
+            if token.pos_ in {"ADV", "ADJ"}:
+                hits.append((tok_start, tok_end, "orange"))
+
+    return hits
 
 
 def print_report_for_file(

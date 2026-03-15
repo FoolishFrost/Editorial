@@ -33,7 +33,7 @@ from tkinter import font as tkfont
 from tkinter import ttk
 from spacy.lang.en.stop_words import STOP_WORDS
 
-from filter_analyzer import analyze_filter_words, find_quote_issues
+from filter_analyzer import analyze_filter_words, analyze_weak_modifiers, find_quote_issues
 
 APP_NAME = "Editorial"
 APP_VERSION = "1.1.0"
@@ -62,6 +62,8 @@ GREEN_FG  = "#a6e3a1"
 GREEN_BG  = "#1a2e1e"
 PURPLE_FG = "#1e1e2e"
 PURPLE_BG = "#f9e2af"
+ORANGE_FG = "#f2cd96"
+ORANGE_BG = "#4a3320"
 FIND_BG   = "#45475a"
 
 POV_PRONOUN_MAP: dict[str, list[str]] = {
@@ -91,6 +93,8 @@ class EditorialApp:
         self.filter_active: bool = False
         self._filter_processing: bool = False
         self._filter_update_needed: bool = False
+        self._weak_mod_active: bool = False
+        self._weak_mod_hits: list[tuple[int, int]] = []
         self._filter_hits: dict[str, list[tuple[int, int]]] = {
             "red": [], "purple": []
         }
@@ -194,6 +198,9 @@ class EditorialApp:
         tm = tk.Menu(bar, **cfg)
         tm.add_command(label="Toggle Filter Words",
                        command=self.toggle_filter, accelerator="Ctrl+Shift+F")
+        tm.add_command(label="Toggle Weak Modifiers",
+                   command=self.toggle_weak_modifiers, accelerator="Ctrl+Shift+W")
+        tm.add_command(label="Refresh Weak Modifiers", command=self.refresh_weak_modifiers)
         tm.add_command(label="POV Names…", command=self.show_pov_names_dialog)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
@@ -463,6 +470,11 @@ class EditorialApp:
             foreground=PURPLE_FG,
             underline=1,
         )
+        self.text.tag_configure(
+            "filter_orange",
+            background=ORANGE_BG,
+            foreground=ORANGE_FG,
+        )
         self.text.tag_configure("find_match",
                     background=FIND_BG, foreground=TEXT)
         self.text.tag_configure("first_line_indent", lmargin1=0, lmargin2=0)
@@ -543,6 +555,7 @@ class EditorialApp:
         root.bind("<Control-S>",       lambda _e: self.save_file_as())
         root.bind("<Control-Shift-s>", lambda _e: self.save_file_as())
         root.bind("<Control-Shift-F>", lambda _e: self.toggle_filter())
+        root.bind("<Control-Shift-W>", lambda _e: self.toggle_weak_modifiers())
         root.bind("<Control-f>",       lambda _e: self.show_find_dialog())
         root.bind("<Control-h>",       lambda _e: self.show_find_dialog(show_replace=True))
         root.bind("<Control-equal>",   lambda _e: self._zoom_in())
@@ -573,6 +586,9 @@ class EditorialApp:
         self.text.edit_reset()
         self.current_file = None
         self._set_title("Untitled")
+        if self._weak_mod_active:
+            self._weak_mod_active = False
+            self._clear_weak_modifiers()
         if self.filter_active:
             self.filter_active = False
             self._update_filter_btn()
@@ -604,6 +620,8 @@ class EditorialApp:
         self._set_title(os.path.basename(path))
         self._update_status()
         self._redraw_lineno()
+        if self._weak_mod_active:
+            self.refresh_weak_modifiers()
         if self.filter_active:
             self._clear_filter()
             self._mark_filter_needs_update()
@@ -1103,6 +1121,27 @@ class EditorialApp:
         messagebox.showinfo("Replace All", f"Replaced {count} occurrence(s).")
 
     # ------------------------------------------------------- filter feature
+
+    def _clear_weak_modifiers(self) -> None:
+        self.text.tag_remove("filter_orange", "1.0", tk.END)
+        self._weak_mod_hits = []
+
+    def refresh_weak_modifiers(self) -> None:
+        if not self._weak_mod_active:
+            return
+        content = self.text.get("1.0", "end-1c")
+        self._clear_weak_modifiers()
+        hits = analyze_weak_modifiers(content)
+        for ws, we, _cls in hits:
+            self.text.tag_add("filter_orange", f"1.0 + {ws}c", f"1.0 + {we}c")
+            self._weak_mod_hits.append((ws, we))
+
+    def toggle_weak_modifiers(self) -> None:
+        self._weak_mod_active = not self._weak_mod_active
+        if self._weak_mod_active:
+            self.refresh_weak_modifiers()
+        else:
+            self._clear_weak_modifiers()
 
     def toggle_filter(self) -> None:
         if self._filter_processing:

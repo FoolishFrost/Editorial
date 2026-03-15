@@ -35,7 +35,7 @@ Preflight Checklist
 - Confirm local build artifacts exist and launch:
   - dist/Editorial.exe
   - release/Editorial-Setup-X.Y.Z.exe
-  - Portable package if applicable
+  - release/Editorial-X.Y.Z-portable.zip
 - Confirm release notes/changelog text is prepared.
 - Prepare simple change notes for this release (3-7 short bullets, plain language).
 - Confirm wiki/manual updates are drafted.
@@ -71,7 +71,7 @@ Step 3: Publish GitHub Release
   - Known limitations
 - Upload artifacts:
   - Installer EXE
-  - Portable EXE/ZIP as applicable
+  - Portable ZIP
 - If using GitHub CLI:
   - Use release field name "name" when querying JSON output.
   - Do not use "title" as a JSON field in gh release view.
@@ -87,15 +87,30 @@ Acceptance criteria:
 
 Step 4: Update Wiki Manual
 --------------------------
-- Update user manual pages in the GitHub Wiki.
-- Ensure any new features/menu items are documented with screenshots where useful.
-- Verify install/update instructions match current release assets.
+- Clone or refresh the GitHub Wiki repo before editing:
+  - git clone https://github.com/FoolishFrost/Editorial.wiki.git <temp-folder>
+  - If the folder already exists, pull latest changes before editing.
+- Update user manual pages in the wiki repo.
+- Ensure these pages exist and are reviewed every release:
+  - Home
+  - Installation and Upgrading
+  - Feature Reference
+  - Troubleshooting
+- If the wiki only has Home, create the missing pages and add links from Home.
+- Sync all release references to the current version and asset filenames.
+- Document any new features, menu items, export behavior, and troubleshooting changes.
+- Ensure install/update instructions match current release assets.
 - Ensure troubleshooting includes current guidance for:
   - Windows SmartScreen prompts
   - Chrome/Edge blocked-download override flow
-- If pushing via a cloned wiki repo, ensure git identity is configured in that repo before commit:
+- Before commit, ensure git identity is configured in the wiki repo:
   - user.name
   - user.email
+- Commit and push the wiki repo separately from the main code repo:
+  - git add .
+  - git commit -m "wiki: update for vX.Y.Z"
+  - git push
+- Remove the temporary wiki clone after publish is complete.
 
 Minimum wiki pages to review each release:
 - Home / Overview
@@ -106,6 +121,8 @@ Minimum wiki pages to review each release:
 Acceptance criteria:
 - Wiki reflects current UI and workflow.
 - No references to removed/renamed features.
+- Wiki release links and asset names match the current GitHub release.
+- Wiki changes are pushed to the GitHub Wiki remote, not left only in a temp folder.
 
 Step 5: Update README
 ---------------------

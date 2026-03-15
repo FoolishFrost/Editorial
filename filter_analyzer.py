@@ -39,6 +39,17 @@ _WORD_RE = re.compile(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?")
 _DASH_RE = re.compile(r"--|\s—|—\s|\s-\s")
 _ELLIPSIS_RE = re.compile(r"(?<!\.)\.{2}(?!\.)|(?<!\.)\.{4,}")
 _LOUD_PUNCT_RE = re.compile(r"!!+|\?!|!\?")
+_DIALOGUE_TAG_VERBS = (
+    "said|asked|replied|murmured|whispered|shouted|yelled|cried|called|"
+    "muttered|snapped|growled|hissed|added|continued|answered|insisted|"
+    "explained|admitted|sighed|laughed|breathed"
+)
+_MISSING_TAG_PUNCT_RE = re.compile(
+    rf"[A-Za-z0-9](?P<quote>[\"\u201d])\s+(?:[a-z][A-Za-z'\u2019-]*\s+){{0,2}}(?:{_DIALOGUE_TAG_VERBS})\b"
+)
+_UPPER_TAG_PRONOUN_RE = re.compile(
+    rf"[.!?\u2026][\"\u201d]\s+(?P<pronoun>He|She|They|We|You|It|I)\s+(?:{_DIALOGUE_TAG_VERBS})\b"
+)
 
 _NLP = None
 
@@ -285,6 +296,18 @@ def analyze_dialogue_mechanics(text: str) -> list[tuple[int, int, str]]:
 
     for start, end in find_quote_issues(text):
         hits.append((start, end, "quote"))
+
+    # Dialogue-tag punctuation checks.
+    # Example: "I am going" he said. -> missing punctuation before closing quote.
+    for match in _MISSING_TAG_PUNCT_RE.finditer(text):
+        q = match.start("quote")
+        hits.append((q, q + 1, "quote"))
+
+    # Dialogue-tag capitalization checks.
+    # Example: "Stop!" He yelled. -> pronoun should usually be lowercase in a tag.
+    for match in _UPPER_TAG_PRONOUN_RE.finditer(text):
+        s, e = match.span("pronoun")
+        hits.append((s, e, "quote"))
 
     for match in _DASH_RE.finditer(text):
         hits.append((match.start(), match.end(), "dash"))

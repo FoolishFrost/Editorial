@@ -137,7 +137,7 @@ class ModeSubsystem:
             return
 
         self._weak_mod_hits = []
-        step = 500
+        step = 180
         idx = 0
 
         def run_chunk() -> None:
@@ -171,18 +171,37 @@ class ModeSubsystem:
             self.root.after(1, done_callback)
             return
 
-        total_chars = max(1, self._text_char_length())
+        try:
+            total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
+        except Exception:
+            total_display_lines = 1
+        total_display_lines = max(1, total_display_lines)
         idx = 0
-        step = 400
+        step = 180
+        prev_idx_str = "1.0"
+        prev_disp = 0
 
         def run_chunk() -> None:
-            nonlocal idx
+            nonlocal idx, prev_idx_str, prev_disp
             if run_id != self._weak_mod_run_seq:
                 return
             end = min(total, idx + step)
             for ws, we in self._weak_mod_hits[idx:end]:
                 mid = (ws + we) // 2
-                self._weak_hit_fracs.append(max(0.0, min(0.999999, mid / total_chars)))
+                try:
+                    idx_str = self.text.index(f"1.0 + {mid}c")
+                    delta = int(self.text.count(prev_idx_str, idx_str, "displaylines")[0])
+                    disp = prev_disp + max(0, delta)
+                except Exception:
+                    try:
+                        idx_str = self.text.index(f"1.0 + {mid}c")
+                        disp = int(self.text.count("1.0", idx_str, "displaylines")[0])
+                    except Exception:
+                        continue
+
+                prev_idx_str = idx_str
+                prev_disp = disp
+                self._weak_hit_fracs.append(max(0.0, min(0.999999, disp / total_display_lines)))
             idx = end
             pct = 85 + int((idx / total) * 15)
             self._set_editor_progress(pct, "Weak")
@@ -226,7 +245,7 @@ class ModeSubsystem:
         run_id = self._punct_run_seq
         self._acquire_ui_lock()
         self._set_editor_progress(2, "Punct")
-        self._lbl_filter.config(text="Punctuation/dialogue - analyzing...")
+        self._lbl_filter.config(text="Punctuation - analyzing...")
         content = self.text.get("1.0", "end-1c")
         self._clear_dialogue_mechanics()
 
@@ -255,7 +274,7 @@ class ModeSubsystem:
             self._release_ui_lock()
             self._lbl_filter.config(text="")
             self.set_editor_mode("off")
-            messagebox.showerror("Punctuation/Dialogue Error", str(error))
+            messagebox.showerror("Punctuation Error", str(error))
             return
 
         grouped: dict[str, list[tuple[int, int]]] = {
@@ -288,7 +307,7 @@ class ModeSubsystem:
             return
 
         idx = 0
-        step = 400
+        step = 180
 
         def run_chunk() -> None:
             nonlocal idx
@@ -373,7 +392,7 @@ class ModeSubsystem:
         self._punct_processing = False
         total = sum((len(v) for v in self._punct_hits.values()), 0)
         self._set_editor_progress(100, "Punct")
-        self._lbl_filter.config(text=f"Punctuation/dialogue - {total} highlighted")
+        self._lbl_filter.config(text=f"Punctuation - {total} highlighted")
         self._request_density_redraw()
         self.root.after(120, lambda: self._set_editor_progress(None, ""))
         self._release_ui_lock()
@@ -434,7 +453,7 @@ class ModeSubsystem:
             return
         self._punct_update_needed = True
         self._show_filter_refresh_button()
-        self._lbl_filter.config(text="Punctuation/dialogue - changes pending (click Refresh)")
+        self._lbl_filter.config(text="Punctuation - changes pending (click Refresh)")
 
     def _mark_active_mode_needs_update(self) -> None:
         if self.filter_active:
@@ -443,6 +462,14 @@ class ModeSubsystem:
             self._mark_weak_needs_update()
         elif self._punct_active:
             self._mark_punct_needs_update()
+        elif getattr(self, "_dialogue_tag_active", False):
+            self._mark_dialogue_tags_needs_update()
+        elif getattr(self, "_emotion_active", False):
+            self._mark_emotion_needs_update()
+        elif getattr(self, "_echo_active", False):
+            self._mark_echo_needs_update()
+        elif getattr(self, "_pacing_active", False):
+            self._mark_pacing_needs_update()
 
     def _on_filter_refresh_clicked(self) -> None:
         if self._is_editor_processing():
@@ -459,6 +486,23 @@ class ModeSubsystem:
         if self._punct_active:
             self._punct_update_needed = False
             self._run_dialogue_mechanics()
+            return
+        if getattr(self, "_dialogue_tag_active", False):
+            self._dialogue_tag_update_needed = False
+            self._run_dialogue_tags_mode()
+            return
+        if getattr(self, "_emotion_active", False):
+            self._emotion_update_needed = False
+            self._run_emotion_catcher_mode()
+            return
+        if getattr(self, "_echo_active", False):
+            self._echo_update_needed = False
+            self._run_echo_radar_mode()
+            return
+        if getattr(self, "_pacing_active", False):
+            self._pacing_update_needed = False
+            self._run_pacing_scan_mode()
+            return
 
     def _finish_filter_processing(self) -> None:
         if self._needs_cache_rebuild:
@@ -561,7 +605,7 @@ class ModeSubsystem:
             self.root.after(1, done_callback)
             return
 
-        step = 250
+        step = 120
         idx = 0
 
         def run_chunk() -> None:
@@ -693,7 +737,7 @@ class ModeSubsystem:
             return
 
         idx = 0
-        step = 200
+        step = 120
         prev_idx_str = "1.0"
         prev_disp = 0
 

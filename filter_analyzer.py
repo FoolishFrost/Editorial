@@ -65,6 +65,13 @@ _TAG_CHAIN_RE = re.compile(
 )
 _UPPER_PRONOUNS = {"He", "She", "They", "We", "You", "It", "I"}
 _STANDARD_TAG_VERBS = {"said", "asked"}
+_OPEN_SENTENCE_PUNCT = '"([{\u201c'
+_CLOSE_SENTENCE_PUNCT = '")]}\u201d!?.,;:\u2026'
+_SENTENCE_END_CHARS = ".!?"
+_COMMON_ABBREVIATIONS = {
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.",
+    "vs.", "etc.", "e.g.", "i.e.", "a.m.", "p.m.",
+}
 
 _NLP = None
 
@@ -273,12 +280,6 @@ def analyze_filter_words(
             if in_dialogue:
                 continue
 
-            # Tell-vs-show catcher: explicit emotion naming in narration.
-            # This runs before contextual filter-verb checks and shares the red class.
-            if token.lemma_.lower() in EMOTION_WORDS:
-                hits.append((tok_start, tok_end, "red"))
-                continue
-
             lemma = token.lemma_.lower()
             if lemma not in _FILTER_SET:
                 continue
@@ -308,6 +309,48 @@ def analyze_filter_words(
     return hits
 
 
+def analyze_emotion_words(
+    text: str,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, str]]:
+    """Return explicit emotion-word hits as (start, end, class) tuples.
+
+    This scan masks dialogue and only flags narration for tell-vs-show terms.
+    """
+    if not text.strip():
+        return []
+
+    nlp = _get_nlp()
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    masked = _mask_dialogue_spans(text, dialogue_spans)
+    doc = nlp(masked)
+
+    hits: list[tuple[int, int, str]] = []
+    span_idx = 0
+
+    total_chars = max(1, len(text))
+    last_progress = -1
+
+    for token in doc:
+        tok_start = token.idx
+        tok_end = token.idx + len(token.text)
+        if progress_callback is not None:
+            pct = max(1, min(100, int((tok_end / total_chars) * 100)))
+            if pct != last_progress:
+                progress_callback(pct)
+                last_progress = pct
+        in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
+        if in_dialogue:
+            continue
+        if token.lemma_.lower() in EMOTION_WORDS:
+            hits.append((tok_start, tok_end, "red"))
+
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
+
+    return hits
+
+
 def analyze_dialogue_mechanics(text: str) -> list[tuple[int, int, str]]:
     """Return punctuation/dialogue hits as (start, end, class) tuples."""
     if not text.strip():
@@ -317,39 +360,6 @@ def analyze_dialogue_mechanics(text: str) -> list[tuple[int, int, str]]:
 
     for start, end in find_quote_issues(text):
         hits.append((start, end, "quote"))
-
-    # Dialogue-tag punctuation checks.
-    # Example: "I am going" he said. -> missing punctuation before closing quote.
-    for match in _MISSING_TAG_PUNCT_RE.finditer(text):
-        q = match.start("quote")
-        hits.append((q, q + 1, "quote"))
-
-    # Dialogue-tag capitalization checks.
-    # Example: "Stop!" He yelled. -> pronoun should usually be lowercase in a tag.
-    for match in _UPPER_TAG_PRONOUN_RE.finditer(text):
-        s, e = match.span("pronoun")
-        hits.append((s, e, "quote"))
-
-    # Full dialogue tag lint checks:
-    # - period before a tag (should usually be comma)
-    # - uppercase pronoun subjects in a dialogue tag
-    # - non-standard tag verbs (not said/asked)
-    for match in _TAG_CHAIN_RE.finditer(text):
-        prepunct = match.group("prepunct")
-        subject = match.group("subject")
-        verb = match.group("verb").lower()
-
-        if prepunct == ".":
-            p = match.start("prepunct")
-            hits.append((p, p + 1, "quote"))
-
-        if subject in _UPPER_PRONOUNS:
-            s, e = match.span("subject")
-            hits.append((s, e, "quote"))
-
-        if verb not in _STANDARD_TAG_VERBS:
-            s, e = match.span("verb")
-            hits.append((s, e, "quote"))
 
     for match in _DASH_RE.finditer(text):
         hits.append((match.start(), match.end(), "dash"))
@@ -364,26 +374,176 @@ def analyze_dialogue_mechanics(text: str) -> list[tuple[int, int, str]]:
     return unique_hits
 
 
-def analyze_sentence_pacing(
-    text: str,
-    short_max_words: int = 8,
-    long_min_words: int = 30,
-) -> list[tuple[int, int, str, int]]:
-    """Return sentence pacing bands as (start, end, class, word_count)."""
+def analyze_dialogue_tags(text: str) -> list[tuple[int, int, str]]:
+    """Return dialogue-tag lint hits as (start, end, class) tuples."""
     if not text.strip():
         return []
 
-    nlp = _get_nlp()
-    doc = nlp(text)
-    bands: list[tuple[int, int, str, int]] = []
+    hits: list[tuple[int, int, str]] = []
 
-    for sent in doc.sents:
-        words = [t for t in sent if t.is_alpha]
-        wc = len(words)
-        if wc <= short_max_words:
-            bands.append((sent.start_char, sent.end_char, "short", wc))
-        elif wc >= long_min_words:
-            bands.append((sent.start_char, sent.end_char, "long", wc))
+    # "I am going" he said. -> missing punctuation before closing quote.
+    for match in _MISSING_TAG_PUNCT_RE.finditer(text):
+        q = match.start("quote")
+        hits.append((q, q + 1, "tag"))
+
+    # "Stop!" He yelled. -> uppercase pronoun often indicates tag capitalization issue.
+    for match in _UPPER_TAG_PRONOUN_RE.finditer(text):
+        s, e = match.span("pronoun")
+        hits.append((s, e, "tag"))
+
+    # Additional dialogue-tag lint checks.
+    for match in _TAG_CHAIN_RE.finditer(text):
+        prepunct = match.group("prepunct")
+        subject = match.group("subject")
+        verb = match.group("verb").lower()
+
+        if prepunct == ".":
+            p = match.start("prepunct")
+            hits.append((p, p + 1, "tag"))
+
+        if subject in _UPPER_PRONOUNS:
+            s, e = match.span("subject")
+            hits.append((s, e, "tag"))
+
+        if verb not in _STANDARD_TAG_VERBS:
+            s, e = match.span("verb")
+            hits.append((s, e, "tag"))
+
+    return sorted(set(hits), key=lambda item: item[0])
+
+
+def analyze_sentence_pacing(
+    text: str,
+    short_max_words: int = 3,
+    average_words: int = 12,
+    long_min_words: int = 19,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, float, int]]:
+    """Return sentence pacing bands as (start, end, heat, word_count)."""
+    if not text.strip():
+        return []
+
+    def is_sentence_break(block: str, idx: int) -> bool:
+        ch = block[idx]
+        if ch not in _SENTENCE_END_CHARS:
+            return False
+        if ch == ".":
+            prev_ch = block[idx - 1] if idx > 0 else ""
+            next_ch = block[idx + 1] if idx + 1 < len(block) else ""
+
+            # Ellipsis is treated as a pacing pause, not a sentence break.
+            if prev_ch == "." or next_ch == ".":
+                return False
+
+            # Don't split decimals.
+            if prev_ch.isdigit() and next_ch.isdigit():
+                return False
+
+            # Suppress common abbreviations from breaking sentences.
+            j = idx - 1
+            while j >= 0 and block[j].isspace():
+                j -= 1
+            k = j
+            while k >= 0 and (block[k].isalpha() or block[k] in {"'", "\u2019", "-"}):
+                k -= 1
+            token = block[k + 1:j + 1].lower()
+            if token and f"{token}." in _COMMON_ABBREVIATIONS:
+                return False
+            # Initials like "A. Smith" should not hard-split.
+            if len(token) == 1 and token.isalpha() and idx + 2 < len(block) and block[idx + 2].isupper():
+                return False
+        return True
+
+    def iter_sentence_spans(block: str):
+        start = 0
+        i = 0
+        while i < len(block):
+            if is_sentence_break(block, i):
+                end = i + 1
+                while end < len(block) and block[end] in _CLOSE_SENTENCE_PUNCT:
+                    end += 1
+                yield (start, end)
+                start = end
+                i = end
+                continue
+            i += 1
+        if start < len(block):
+            yield (start, len(block))
+
+    bands: list[tuple[int, int, float, int]] = []
+    total_chars = max(1, len(text))
+    last_progress = -1
+
+    # Analyze non-empty paragraph blocks independently so scene breaks and blank
+    # lines can never merge into phantom long "sentences".
+    cursor = 0
+    while cursor < len(text):
+        match = re.search(r"\n[ \t]*\n+", text[cursor:])
+        if match is None:
+            block_end = len(text)
+            next_cursor = len(text)
+        else:
+            block_end = cursor + match.start()
+            next_cursor = cursor + match.end()
+        block = text[cursor:block_end]
+        block_offset = cursor
+
+        if block.strip():
+            for sent_start, sent_end in iter_sentence_spans(block):
+                global_end = block_offset + sent_end
+                if progress_callback is not None:
+                    pct = max(1, min(100, int((global_end / total_chars) * 100)))
+                    if pct != last_progress:
+                        progress_callback(pct)
+                        last_progress = pct
+
+                sent_text = block[sent_start:sent_end]
+                words = list(_WORD_RE.finditer(sent_text))
+                wc = len(words)
+                if wc == 0:
+                    continue
+
+                start_char = sent_start + words[0].start()
+                while start_char > sent_start and block[start_char - 1] in _OPEN_SENTENCE_PUNCT:
+                    start_char -= 1
+
+                end_char = sent_start + words[-1].end()
+                # Include possessive/contraction suffixes attached to the last
+                # alpha token (e.g. Nalls's, don't, he'll) so apostrophes do
+                # not truncate the detected sentence span.
+                while (
+                    end_char + 1 < sent_end
+                    and block[end_char] in {"'", "\u2019"}
+                    and block[end_char + 1].isalpha()
+                ):
+                    end_char += 1
+                    while end_char < sent_end and block[end_char].isalpha():
+                        end_char += 1
+                while end_char < sent_end and block[end_char] in _CLOSE_SENTENCE_PUNCT:
+                    end_char += 1
+
+                if wc <= short_max_words:
+                    heat = -1.0
+                elif wc < average_words:
+                    heat = -1.0 + ((wc - short_max_words) / max(1, average_words - short_max_words))
+                elif wc >= long_min_words:
+                    heat = 1.0
+                else:
+                    heat = (wc - average_words) / max(1, long_min_words - average_words)
+
+                bands.append(
+                    (
+                        block_offset + start_char,
+                        block_offset + end_char,
+                        max(-1.0, min(1.0, heat)),
+                        wc,
+                    )
+                )
+
+        cursor = next_cursor
+
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
 
     return bands
 

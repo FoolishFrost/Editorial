@@ -31,7 +31,7 @@ class IndicatorSubsystem:
         self.request_density_redraw()
 
     def on_density_click(self, event) -> None:
-        if not (self.app.filter_active or self.app._weak_mod_active):
+        if not self.app._mode_uses_density_band():
             return
         h = max(2, self.app._density.winfo_height())
         frac = max(0.0, min(1.0, event.y / (h - 1)))
@@ -40,7 +40,7 @@ class IndicatorSubsystem:
         self.update_density_viewport()
 
     def on_density_drag(self, event) -> None:
-        if not (self.app.filter_active or self.app._weak_mod_active):
+        if not self.app._mode_uses_density_band():
             return
         h = max(2, self.app._density.winfo_height())
         frac = max(0.0, min(1.0, event.y / (h - 1)))
@@ -68,7 +68,7 @@ class IndicatorSubsystem:
         self.app._density_viewport_canvas = None
 
     def on_quote_band_click(self, event) -> None:
-        if not (self.app.filter_active or self.app._punct_active):
+        if not self.app._mode_uses_quote_band():
             return
         h = max(2, self.app._quote_dots.winfo_height())
         frac = max(0.0, min(1.0, event.y / (h - 1)))
@@ -77,7 +77,7 @@ class IndicatorSubsystem:
         self.update_density_viewport()
 
     def on_quote_band_drag(self, event) -> None:
-        if not (self.app.filter_active or self.app._punct_active):
+        if not self.app._mode_uses_quote_band():
             return
         h = max(2, self.app._quote_dots.winfo_height())
         frac = max(0.0, min(1.0, event.y / (h - 1)))
@@ -108,7 +108,7 @@ class IndicatorSubsystem:
         self.app.root.after(16, go)
 
     def update_density_viewport(self) -> None:
-        if not (self.app.filter_active or self.app._weak_mod_active or self.app._punct_active):
+        if not (self.app._mode_uses_density_band() or self.app._punct_active):
             return
         if self.app._density_viewport_pending:
             return
@@ -149,7 +149,7 @@ class IndicatorSubsystem:
         self.app._density_viewport_id = None
         self.app._density_viewport_canvas = None
         self.app._quote_dots.delete("all")
-        if not (self.app.filter_active or self.app._weak_mod_active or self.app._punct_active):
+        if not (self.app._mode_uses_density_band() or self.app._punct_active):
             return
 
         if self.app._density_visible:
@@ -160,40 +160,45 @@ class IndicatorSubsystem:
             span = max(0.01, last - first)
             pages = max(1, int(math.ceil(1.0 / span)))
 
-            mode_key = "red" if self.app.filter_active else "orange"
-            page_counts: list[dict[str, int]] = [{mode_key: 0} for _ in range(pages)]
-
             if self.app.filter_active:
                 if not any(self.app._filter_hit_fracs.values()) and any(self.app._filter_hits.values()):
-                    total_chars = max(1, self.app._text_char_length())
                     for level in ("red", "purple"):
-                        fracs: list[float] = []
-                        for ws, we in self.app._filter_hits.get(level, []):
-                            mid = (ws + we) // 2
-                            fracs.append(max(0.0, min(0.999999, mid / total_chars)))
-                        self.app._filter_hit_fracs[level] = fracs
-
-                for frac in self.app._filter_hit_fracs.get("red", []):
-                    page_idx = min(pages - 1, max(0, int(frac * pages)))
-                    page_counts[page_idx]["red"] += 1
+                        self.app._filter_hit_fracs[level] = self.app._compute_displayline_midpoint_fracs(
+                            self.app._filter_hits.get(level, [])
+                        )
+                source_fracs = self.app._filter_hit_fracs.get("red", [])
+                fill_color = self.colors["RED_FG"]
+            elif self.app._weak_mod_active:
+                source_fracs = self.app._weak_hit_fracs
+                fill_color = self.colors["ORANGE_FG"]
+            elif self.app._emotion_active:
+                source_fracs = self.app._emotion_hit_fracs
+                fill_color = self.colors["RED_FG"]
+            elif self.app._echo_active:
+                source_fracs = self.app._echo_hit_fracs
+                fill_color = self.colors["ACCENT"]
+            elif self.app._dialogue_tag_active:
+                source_fracs = self.app._dialogue_tag_hit_fracs
+                fill_color = self.colors["ORANGE_FG"]
             else:
-                for frac in self.app._weak_hit_fracs:
-                    page_idx = min(pages - 1, max(0, int(frac * pages)))
-                    page_counts[page_idx]["orange"] += 1
+                source_fracs = []
+                fill_color = self.colors["ACCENT"]
 
-            max_total = max((sum(p.values()) for p in page_counts), default=0)
+            page_counts: list[int] = [0 for _ in range(pages)]
+            for frac in source_fracs:
+                page_idx = min(pages - 1, max(0, int(frac * pages)))
+                page_counts[page_idx] += 1
+
+            max_total = max(page_counts, default=0)
             avail_w = max(1, width - 2)
 
-            for i, counts in enumerate(page_counts):
+            for i, total in enumerate(page_counts):
                 y1 = int((i * height) / pages)
                 y2 = max(y1 + 1, int(((i + 1) * height) / pages))
-
-                total = counts[mode_key]
                 if total <= 0 or max_total <= 0:
                     continue
 
                 row_w = max(1, int((total / max_total) * avail_w))
-                fill_color = self.colors["RED_FG"] if self.app.filter_active else self.colors["ORANGE_FG"]
                 self.app._density.create_rectangle(1, y1, 1 + row_w, y2, fill=fill_color, outline="")
 
         if self.app._quote_band_visible:

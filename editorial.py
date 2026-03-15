@@ -21,6 +21,7 @@ import os
 import threading
 import math
 import re
+import bisect
 import ctypes
 import subprocess
 import webbrowser
@@ -35,7 +36,14 @@ from spacy.lang.en.stop_words import STOP_WORDS
 
 from editorial_indicators import IndicatorSubsystem
 from editorial_modes import ModeSubsystem
-from filter_analyzer import analyze_dialogue_mechanics, analyze_filter_words, analyze_sentence_pacing, analyze_weak_modifiers
+from filter_analyzer import (
+    analyze_dialogue_mechanics,
+    analyze_dialogue_tags,
+    analyze_emotion_words,
+    analyze_filter_words,
+    analyze_sentence_pacing,
+    analyze_weak_modifiers,
+)
 
 APP_NAME = "Editorial"
 APP_VERSION = "1.1.0"
@@ -72,6 +80,28 @@ WHITE_FG  = "#f5f5f5"
 WHITE_BG  = "#3a3a3a"
 FIND_BG   = "#45475a"
 
+PACING_SHORT_WORDS = 3
+PACING_AVERAGE_WORDS = 12
+PACING_LONG_WORDS = 19
+PACING_TAG_STYLES: tuple[tuple[str, str, str], ...] = (
+    ("pacing_cool_3", "#eaf5ff", "#14395f"),
+    ("pacing_cool_2", "#e3f6ff", "#1b4a73"),
+    ("pacing_cool_1", "#def7ff", "#255e83"),
+    ("pacing_neutral", "#deffe5", "#21482d"),
+    ("pacing_warm_1", "#fff1c9", "#61501f"),
+    ("pacing_warm_2", "#ffe0c6", "#6d341d"),
+    ("pacing_hot", "#ffe0e0", "#652126"),
+)
+PACING_EXPORT_LABELS = {
+    "pacing_cool_3": "VERY SHORT",
+    "pacing_cool_2": "SHORT",
+    "pacing_cool_1": "BRISK",
+    "pacing_neutral": "BALANCED",
+    "pacing_warm_1": "STRETCHED",
+    "pacing_warm_2": "LONG",
+    "pacing_hot": "VERY LONG",
+}
+
 POV_PRONOUN_MAP: dict[str, list[str]] = {
     "First Person (I/We)": ["i", "we", "me", "us"],
     "Third Person Male (He)": ["he", "him"],
@@ -84,12 +114,20 @@ EDITOR_MODE_OFF = "off"
 EDITOR_MODE_FILTER = "filter_words"
 EDITOR_MODE_WEAK = "weak_modifiers"
 EDITOR_MODE_PUNCT = "dialogue_punctuation"
+EDITOR_MODE_DTAG = "dialogue_tags"
+EDITOR_MODE_EMOTION = "emotion_catcher"
+EDITOR_MODE_ECHO = "echo_radar"
+EDITOR_MODE_PACING = "rhythm_pacing"
 
 EDITOR_MODES: list[tuple[str, str]] = [
     ("Editor Off", EDITOR_MODE_OFF),
     ("Filter Words", EDITOR_MODE_FILTER),
     ("Weak Modifiers", EDITOR_MODE_WEAK),
-    ("Punctuation & Dialogue", EDITOR_MODE_PUNCT),
+    ("Punctuation", EDITOR_MODE_PUNCT),
+    ("Dialogue Tags", EDITOR_MODE_DTAG),
+    ("Emotion Catcher", EDITOR_MODE_EMOTION),
+    ("Proximity Echo Radar", EDITOR_MODE_ECHO),
+    ("Rhythm & Pacing", EDITOR_MODE_PACING),
 ]
 
 
@@ -113,12 +151,22 @@ class EditorialApp:
         self._filter_update_needed: bool = False
         self._weak_update_needed: bool = False
         self._punct_update_needed: bool = False
+        self._dialogue_tag_update_needed: bool = False
+        self._emotion_update_needed: bool = False
+        self._echo_update_needed: bool = False
+        self._pacing_update_needed: bool = False
         self._weak_mod_active: bool = False
         self._weak_mod_processing: bool = False
         self._weak_mod_run_seq: int = 0
         self._punct_active: bool = False
         self._punct_processing: bool = False
         self._punct_run_seq: int = 0
+        self._dialogue_tag_active: bool = False
+        self._mode_wrapper_processing: bool = False
+        self._mode_wrapper_run_seq: int = 0
+        self._emotion_active: bool = False
+        self._echo_active: bool = False
+        self._pacing_active: bool = False
         self._active_editor_mode: str = EDITOR_MODE_OFF
         self._editor_mode_var = tk.StringVar(value=EDITOR_MODE_OFF)
         self._editor_mode_label_var = tk.StringVar(value="Editor Off")
@@ -126,6 +174,20 @@ class EditorialApp:
         self._label_to_mode = {label: value for label, value in EDITOR_MODES}
         self._weak_mod_hits: list[tuple[int, int]] = []
         self._weak_hit_fracs: list[float] = []
+        self._emotion_hits: list[tuple[int, int]] = []
+        self._emotion_hit_fracs: list[float] = []
+        self._echo_hits: list[tuple[int, int]] = []
+        self._echo_hit_fracs: list[float] = []
+        self._echo_groups: dict[str, list[tuple[int, int, int]]] = {}
+        self._echo_token_hits: list[tuple[str, int, int, int]] = []
+        self._echo_token_starts: list[int] = []
+        self._echo_focus_word: str = ""
+        self._echo_focus_refresh_job: str | None = None
+        self._echo_focus_window_words: int = 80
+        self._dialogue_tag_hits: list[tuple[int, int]] = []
+        self._dialogue_tag_hit_fracs: list[float] = []
+        self._typography_hits: list[tuple[int, int]] = []
+        self._typography_hit_fracs: list[float] = []
         self._punct_hits: dict[str, list[tuple[int, int]]] = {
             "quote": [],
             "dash": [],
@@ -169,7 +231,7 @@ class EditorialApp:
         self._tools_mode_entries: list[tuple[int, str, str]] = []
         self._tools_refresh_index: int | None = None
         self._pacing_lane_visible: bool = False
-        self._pacing_lane_hits: list[float] = []
+        self._pacing_heat_spans: list[tuple[float, float, float]] = []
         self._pacing_viewport_id: int | None = None
         self._find_dialog: tk.Toplevel | None = None
         self._find_var = tk.StringVar()
@@ -286,20 +348,49 @@ class EditorialApp:
         )
         self._tools_mode_entries.append((int(tm.index("end")), "Weak Modifiers", EDITOR_MODE_WEAK))
         tm.add_radiobutton(
-            label="Punctuation & Dialogue",
+            label="Punctuation",
             variable=self._editor_mode_var,
             value=EDITOR_MODE_PUNCT,
             command=self._on_tools_mode_selected,
             accelerator="Ctrl+Shift+P",
         )
-        self._tools_mode_entries.append((int(tm.index("end")), "Punctuation & Dialogue", EDITOR_MODE_PUNCT))
+        self._tools_mode_entries.append((int(tm.index("end")), "Punctuation", EDITOR_MODE_PUNCT))
+        tm.add_radiobutton(
+            label="Dialogue Tags",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_DTAG,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+D",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Dialogue Tags", EDITOR_MODE_DTAG))
+        tm.add_radiobutton(
+            label="Emotion Catcher",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_EMOTION,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+E",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Emotion Catcher", EDITOR_MODE_EMOTION))
+        tm.add_radiobutton(
+            label="Proximity Echo Radar",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_ECHO,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+R",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Proximity Echo Radar", EDITOR_MODE_ECHO))
+        tm.add_radiobutton(
+            label="Rhythm & Pacing",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_PACING,
+            command=self._on_tools_mode_selected,
+            accelerator="Ctrl+Shift+M",
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Rhythm & Pacing", EDITOR_MODE_PACING))
         tm.add_separator()
         tm.add_command(label="Refresh", command=self._on_filter_refresh_clicked)
         self._tools_refresh_index = int(tm.index("end"))
         tm.add_command(label="Set POV Names…", command=self.show_pov_names_dialog)
-        tm.add_command(label="Typography Standardizer", command=self.standardize_typography)
-        tm.add_command(label="Proximity Echo Radar", command=self.run_echo_radar)
-        tm.add_command(label="Rhythm & Pacing Scan", command=self.run_pacing_scan)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
@@ -538,7 +629,7 @@ class EditorialApp:
 
         # Density mini-map canvas (red filter hits)
         self._density = tk.Canvas(
-            container, bg=BG_SURFACE, width=28, highlightthickness=0,
+            container, bg=BG_SURFACE, width=30, highlightthickness=0,
             cursor="hand2",
         )
         self._density.bind("<Button-1>", self._on_density_click)
@@ -554,9 +645,9 @@ class EditorialApp:
         self._quote_dots.bind("<B1-Motion>", self._on_quote_band_drag)
         self._quote_dots.bind("<Configure>", self._on_density_configure)
 
-        # Rhythm pacing lane (long sentence density)
+        # Rhythm pacing lane (sentence heat map)
         self._pacing_lane = tk.Canvas(
-            container, bg=BG_SURFACE, width=12, highlightthickness=0,
+            container, bg=BG_SURFACE, width=30, highlightthickness=0,
             cursor="hand2",
         )
         self._pacing_lane.bind("<Button-1>", self._on_pacing_lane_click)
@@ -637,21 +728,45 @@ class EditorialApp:
         )
         self.text.tag_configure(
             "echo_hit",
-            background=BG_OVERLAY,
-            foreground=TEXT,
+            background="#3b4f6f",
+            foreground="#eef6ff",
+            underline=0,
+        )
+        self.text.tag_configure(
+            "echo_focus",
+            background="#35567f",
+            foreground="#e6f3ff",
             underline=1,
         )
         self.text.tag_configure(
-            "pacing_short",
-            background="#24344a",
-            foreground="#a6d8ff",
-        )
-        self.text.tag_configure(
-            "pacing_long",
-            background=PURPLE_BG,
-            foreground=PURPLE_FG,
+            "echo_focus_cursor",
+            background="#4d79ad",
+            foreground="#ffffff",
             underline=1,
         )
+        self.text.tag_configure(
+            "dialogue_tag",
+            background=ORANGE_BG,
+            foreground=ORANGE_FG,
+            underline=1,
+        )
+        self.text.tag_configure(
+            "emotion_hit",
+            background=RED_BG,
+            foreground=RED_FG,
+        )
+        self.text.tag_configure(
+            "typography_hit",
+            background=BLUE_BG,
+            foreground=BLUE_FG,
+            underline=1,
+        )
+        for tag_name, fg, bg in PACING_TAG_STYLES:
+            self.text.tag_configure(
+                tag_name,
+                background=bg,
+                foreground=fg,
+            )
         self.text.tag_configure("find_match",
                     background=FIND_BG, foreground=TEXT)
         self.text.tag_configure("first_line_indent", lmargin1=0, lmargin2=0)
@@ -735,6 +850,10 @@ class EditorialApp:
         root.bind("<Control-Shift-F>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_FILTER))
         root.bind("<Control-Shift-W>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_WEAK))
         root.bind("<Control-Shift-P>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_PUNCT))
+        root.bind("<Control-Shift-D>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_DTAG))
+        root.bind("<Control-Shift-E>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_EMOTION))
+        root.bind("<Control-Shift-R>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_ECHO))
+        root.bind("<Control-Shift-M>", lambda _e: self._toggle_editor_mode_shortcut(EDITOR_MODE_PACING))
         root.bind("<Control-f>",       lambda _e: self.show_find_dialog())
         root.bind("<Control-h>",       lambda _e: self.show_find_dialog(show_replace=True))
         root.bind("<Control-equal>",   lambda _e: self._zoom_in())
@@ -799,6 +918,21 @@ class EditorialApp:
         if self.filter_active:
             self._clear_filter()
             self._mark_filter_needs_update()
+        if self._punct_active:
+            self._clear_dialogue_mechanics()
+            self._mark_punct_needs_update()
+        if self._emotion_active:
+            self._clear_emotion_highlights()
+            self._mark_emotion_needs_update()
+        if self._echo_active:
+            self._clear_echo_highlights()
+            self._mark_echo_needs_update()
+        if self._pacing_active:
+            self._clear_pacing_highlights()
+            self._mark_pacing_needs_update()
+        if self._dialogue_tag_active:
+            self._clear_dialogue_tag_highlights()
+            self._mark_dialogue_tags_needs_update()
 
     def _toggle_editor_mode_shortcut(self, mode: str) -> None:
         current = self._active_editor_mode
@@ -847,7 +981,24 @@ class EditorialApp:
         self.root.after(120, tick)
 
     def _is_editor_processing(self) -> bool:
-        return self._filter_processing or self._weak_mod_processing or self._punct_processing
+        return (
+            self._filter_processing
+            or self._weak_mod_processing
+            or self._punct_processing
+            or self._mode_wrapper_processing
+        )
+
+    def _mode_uses_density_band(self) -> bool:
+        return (
+            self.filter_active
+            or self._weak_mod_active
+            or self._dialogue_tag_active
+            or self._emotion_active
+            or self._echo_active
+        )
+
+    def _mode_uses_quote_band(self) -> bool:
+        return self.filter_active or self._punct_active
 
     def _sync_editor_mode_ui(self) -> None:
         mode = self._active_editor_mode or EDITOR_MODE_OFF
@@ -892,65 +1043,75 @@ class EditorialApp:
         self._filter_update_needed = False
         self._weak_update_needed = False
         self._punct_update_needed = False
+        self._dialogue_tag_update_needed = False
+        self._emotion_update_needed = False
+        self._echo_update_needed = False
+        self._pacing_update_needed = False
         self._hide_filter_refresh_button()
 
+        self.filter_active = False
+        self._weak_mod_active = False
+        self._punct_active = False
+        self._dialogue_tag_active = False
+        self._emotion_active = False
+        self._echo_active = False
+        self._pacing_active = False
+
+        self._clear_filter()
+        self._clear_weak_modifiers()
+        self._clear_dialogue_mechanics()
+        self._clear_dialogue_tag_highlights()
+        self._clear_emotion_highlights()
+        self._clear_echo_highlights()
+        self._clear_pacing_highlights()
+        self._hide_quote_band()
+        self._hide_density_band()
+
         if mode == EDITOR_MODE_OFF:
-            if self.filter_active:
-                self.filter_active = False
-                self._clear_filter()
-            if self._weak_mod_active:
-                self._weak_mod_active = False
-                self._clear_weak_modifiers()
-            if self._punct_active:
-                self._punct_active = False
-                self._clear_dialogue_mechanics()
             self._set_editor_progress(None, "")
             self._lbl_filter.config(text="")
-            self._hide_quote_band()
-            self._hide_density_band()
             return
 
         if mode == EDITOR_MODE_FILTER:
-            if self._weak_mod_active:
-                self._weak_mod_active = False
-                self._clear_weak_modifiers()
-            if self._punct_active:
-                self._punct_active = False
-                self._clear_dialogue_mechanics()
             self.filter_active = True
             self._show_density_band()
-            self._hide_quote_band()
             self._run_filter()
             return
 
         if mode == EDITOR_MODE_WEAK:
-            if self.filter_active:
-                self.filter_active = False
-                self._clear_filter()
-            if self._punct_active:
-                self._punct_active = False
-                self._clear_dialogue_mechanics()
-            self._filter_update_needed = False
-            self._hide_filter_refresh_button()
-            self._hide_quote_band()
             self._show_density_band()
             self._weak_mod_active = True
             self._run_weak_modifiers()
             return
 
         if mode == EDITOR_MODE_PUNCT:
-            if self.filter_active:
-                self.filter_active = False
-                self._clear_filter()
-            if self._weak_mod_active:
-                self._weak_mod_active = False
-                self._clear_weak_modifiers()
-            self._filter_update_needed = False
-            self._hide_filter_refresh_button()
-            self._hide_density_band()
             self._show_quote_band()
             self._punct_active = True
             self._run_dialogue_mechanics()
+            return
+
+        if mode == EDITOR_MODE_DTAG:
+            self._show_density_band()
+            self._dialogue_tag_active = True
+            self._run_dialogue_tags_mode()
+            return
+
+        if mode == EDITOR_MODE_EMOTION:
+            self._show_density_band()
+            self._emotion_active = True
+            self._run_emotion_catcher_mode()
+            return
+
+        if mode == EDITOR_MODE_ECHO:
+            self._show_density_band()
+            self._echo_active = True
+            self._run_echo_radar_mode()
+            return
+
+        if mode == EDITOR_MODE_PACING:
+            self._pacing_active = True
+            self._run_pacing_scan_mode()
+            return
 
     def save_file(self) -> None:
         if self.current_file:
@@ -1006,6 +1167,14 @@ class EditorialApp:
             label_map: dict[str, str] | None = None
             if mode == EDITOR_MODE_PUNCT:
                 label_map = {"quote": "QUOTE", "dash": "DASH", "ellipsis": "ELLIPSIS", "loud": "LOUD"}
+            elif mode == EDITOR_MODE_DTAG:
+                label_map = {"dialogue_tag": "DTAG"}
+            elif mode == EDITOR_MODE_EMOTION:
+                label_map = {"emotion": "EMOTION"}
+            elif mode == EDITOR_MODE_ECHO:
+                label_map = {"echo": "ECHO"}
+            elif mode == EDITOR_MODE_PACING:
+                label_map = dict(PACING_EXPORT_LABELS)
             tagged = self._build_tagged_export(text, ranges, label_map)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
@@ -1161,6 +1330,60 @@ class EditorialApp:
         active_pov: list[str],
         pov_names: set[str] | None = None,
     ) -> list[tuple[int, int, str]]:
+        if mode == EDITOR_MODE_EMOTION:
+            if not self._emotion_update_needed and self._emotion_hits:
+                return sorted([(ws, we, "emotion") for ws, we in self._emotion_hits], key=lambda x: x[0])
+            return sorted(
+                [(ws, we, "emotion") for ws, we, _cls in analyze_emotion_words(text)],
+                key=lambda x: x[0],
+            )
+        if mode == EDITOR_MODE_ECHO:
+            if not self._echo_update_needed and self._echo_hits:
+                return sorted([(ws, we, "echo") for ws, we in self._echo_hits], key=lambda x: x[0])
+            token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+            filler_words = {
+                "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
+                "well", "just", "really", "very", "quite", "actually",
+                "basically", "literally", "perhaps", "maybe",
+            }
+            blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
+            blocked_words.update(filler_words)
+            tokens: list[tuple[str, int, int]] = []
+            for m in token_re.finditer(text):
+                word = m.group(0).lower().replace("\u2019", "'")
+                clean = word.replace("'", "")
+                if not clean.isalpha() or len(clean) < 3 or word in blocked_words:
+                    continue
+                tokens.append((word, m.start(), m.end()))
+            last_seen: dict[str, int] = {}
+            flagged: set[int] = set()
+            for idx, (word, _start, _end) in enumerate(tokens):
+                prev = last_seen.get(word)
+                if prev is not None and (idx - prev) <= 300:
+                    flagged.add(prev)
+                    flagged.add(idx)
+                last_seen[word] = idx
+            return sorted(
+                [(tokens[idx][1], tokens[idx][2], "echo") for idx in flagged],
+                key=lambda x: x[0],
+            )
+        if mode == EDITOR_MODE_DTAG:
+            if not self._dialogue_tag_update_needed and self._dialogue_tag_hits:
+                return sorted([(ws, we, "dialogue_tag") for ws, we in self._dialogue_tag_hits], key=lambda x: x[0])
+            return sorted(
+                [(ws, we, "dialogue_tag") for ws, we, _cls in analyze_dialogue_tags(text)],
+                key=lambda x: x[0],
+            )
+        if mode == EDITOR_MODE_PACING:
+            ranges: list[tuple[int, int, str]] = []
+            for ws, we, heat, _wc in analyze_sentence_pacing(
+                text,
+                short_max_words=PACING_SHORT_WORDS,
+                average_words=PACING_AVERAGE_WORDS,
+                long_min_words=PACING_LONG_WORDS,
+            ):
+                ranges.append((ws, we, self._pacing_tag_from_heat(heat)))
+            return sorted(ranges, key=lambda x: x[0])
         if mode == EDITOR_MODE_WEAK:
             if not self._weak_update_needed and self._weak_mod_hits:
                 return sorted(
@@ -1252,6 +1475,8 @@ class EditorialApp:
         #  8 BLUE_BG  #1f2b40  \red31\green43\blue64
         #  9 WHITE_FG #f5f5f5  \red245\green245\blue245
         # 10 WHITE_BG #3a3a3a  \red58\green58\blue58
+        # 11 GREEN_FG #a6e3a1  \red166\green227\blue161
+        # 12 GREEN_BG #1a2e1e  \red26\green46\blue30
         level_colors: dict[str, tuple[int, int, bool]] = {
             "red":      (1, 2),   # filter words:     RED_FG on RED_BG
             "orange":   (3, 4),   # weak modifiers:   ORANGE_FG on ORANGE_BG
@@ -1260,6 +1485,17 @@ class EditorialApp:
             "ellipsis": (9, 10),  # ellipsis:         WHITE_FG on WHITE_BG
             "loud":     (1, 2),   # loud punctuation: RED_FG on RED_BG
             "purple":   (5, 6),   # legacy quote:     PURPLE_FG on PURPLE_BG
+            "emotion":  (1, 2),   # emotion words:    RED_FG on RED_BG
+            "echo":     (7, 8),   # echo radar:       BLUE_FG on BLUE_BG
+            "dialogue_tag": (3, 4),
+            "typography": (7, 8), # typography scan:  BLUE_FG on BLUE_BG
+            "pacing_cool_3": (7, 8),
+            "pacing_cool_2": (7, 8),
+            "pacing_cool_1": (7, 8),
+            "pacing_neutral": (11, 12),
+            "pacing_warm_1": (3, 4),
+            "pacing_warm_2": (3, 4),
+            "pacing_hot": (1, 2),
         }
 
         chunks: list[str] = []
@@ -1271,7 +1507,7 @@ class EditorialApp:
                 chunks.append(self._rtf_escape(text[pos:start]))
             word = self._rtf_escape(text[start:end])
             cf, highlight = level_colors.get(level, (1, 2))
-            underline = level in {"quote", "dash", "ellipsis", "loud"}
+            underline = level in {"quote", "dash", "ellipsis", "loud", "echo", "typography", "dialogue_tag"}
             prefix = r"{\cf" + str(cf) + r"\highlight" + str(highlight) + " "
             if underline:
                 prefix += r"\ul "
@@ -1292,6 +1528,8 @@ class EditorialApp:
             r"\red31\green43\blue64;"      #  8 BLUE_BG  #1f2b40
             r"\red245\green245\blue245;"   #  9 WHITE_FG #f5f5f5
             r"\red58\green58\blue58;"      # 10 WHITE_BG #3a3a3a
+            r"\red166\green227\blue161;"   # 11 GREEN_FG #a6e3a1
+            r"\red26\green46\blue30;"      # 12 GREEN_BG #1a2e1e
             r"}"
         )
         header = (
@@ -1354,22 +1592,7 @@ class EditorialApp:
         self._mark_active_mode_needs_update()
 
     def standardize_typography(self) -> None:
-        if self._is_editor_processing():
-            return
-
-        text = self.text.get("1.0", "end-1c")
-        normalized, changes = self._standardize_typography_text(text)
-        if changes == 0:
-            messagebox.showinfo("Typography Standardizer", "No typography changes were needed.")
-            return
-
-        self.text.edit_separator()
-        self.text.delete("1.0", tk.END)
-        self.text.insert("1.0", normalized)
-        self.text.edit_separator()
-        self._update_status()
-        self._mark_active_mode_needs_update()
-        messagebox.showinfo("Typography Standardizer", f"Applied {changes} typography normalization(s).")
+        messagebox.showinfo("Typography", "Typography mode is disabled for now.")
 
     def _standardize_typography_text(self, text: str) -> tuple[str, int]:
         working = text
@@ -1428,50 +1651,498 @@ class EditorialApp:
 
         return "".join(out)
 
+    def _clear_emotion_highlights(self) -> None:
+        self.text.tag_remove("emotion_hit", "1.0", tk.END)
+        self._emotion_hits = []
+        self._emotion_hit_fracs = []
+
+    def _clear_typography_highlights(self) -> None:
+        self.text.tag_remove("typography_hit", "1.0", tk.END)
+        self._typography_hits = []
+        self._typography_hit_fracs = []
+
+    def _clear_dialogue_tag_highlights(self) -> None:
+        self.text.tag_remove("dialogue_tag", "1.0", tk.END)
+        self._dialogue_tag_hits = []
+        self._dialogue_tag_hit_fracs = []
+
+    def _apply_tag_ranges_progressive(
+        self,
+        run_id: int,
+        mode_label: str,
+        ranges: list[tuple[int, int]],
+        tag_name: str,
+        on_done,
+    ) -> None:
+        total = len(ranges)
+        if total == 0:
+            self._set_editor_progress(100, mode_label)
+            self.root.after(1, on_done)
+            return
+
+        idx = 0
+        step = 140
+
+        def run_chunk() -> None:
+            nonlocal idx
+            if run_id != self._mode_wrapper_run_seq:
+                return
+            end = min(total, idx + step)
+            for ws, we in ranges[idx:end]:
+                if we <= ws:
+                    continue
+                self.text.tag_add(tag_name, f"1.0 + {ws}c", f"1.0 + {we}c")
+            idx = end
+            pct = 56 + int((idx / total) * 42)
+            self._set_editor_progress(pct, mode_label)
+            if idx < total:
+                self.root.after(1, run_chunk)
+            else:
+                on_done()
+
+        run_chunk()
+
+    def _build_displayline_midpoint_fracs_async(
+        self,
+        run_id: int,
+        ranges: list[tuple[int, int]],
+        on_done,
+    ) -> None:
+        if not ranges:
+            self.root.after(1, lambda: on_done([]))
+            return
+
+        try:
+            total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
+        except Exception:
+            total_display_lines = 1
+        total_display_lines = max(1, total_display_lines)
+
+        mids = sorted(((ws + we) // 2 for ws, we in ranges if we > ws))
+        if not mids:
+            self.root.after(1, lambda: on_done([]))
+            return
+
+        # Mapping every hit through displayline counting is expensive on very
+        # large hit sets (Echo can produce thousands). Fall back to char-space
+        # fractions to keep mode activation responsive.
+        if len(mids) > 2400:
+            self.root.after(1, lambda: on_done(self._compute_midpoint_fracs(ranges)))
+            return
+
+        fracs: list[float] = []
+        idx = 0
+        step = 220
+        prev_idx_str = "1.0"
+        prev_disp = 0
+        total = len(mids)
+
+        def run_chunk() -> None:
+            nonlocal idx, prev_idx_str, prev_disp
+            if run_id != self._mode_wrapper_run_seq:
+                return
+            end = min(total, idx + step)
+            for mid in mids[idx:end]:
+                try:
+                    idx_str = self.text.index(f"1.0 + {mid}c")
+                    delta = int(self.text.count(prev_idx_str, idx_str, "displaylines")[0])
+                    disp = prev_disp + max(0, delta)
+                except Exception:
+                    try:
+                        idx_str = self.text.index(f"1.0 + {mid}c")
+                        disp = int(self.text.count("1.0", idx_str, "displaylines")[0])
+                    except Exception:
+                        continue
+
+                prev_idx_str = idx_str
+                prev_disp = disp
+                fracs.append(max(0.0, min(0.999999, disp / total_display_lines)))
+
+            idx = end
+            if idx < total:
+                self.root.after(1, run_chunk)
+            else:
+                on_done(fracs)
+
+        run_chunk()
+
+    def _normalize_span(self, text: str, start: int, end: int) -> tuple[int, int] | None:
+        s = max(0, start)
+        e = min(len(text), end)
+        while s < e and text[s].isspace():
+            s += 1
+        while e > s and text[e - 1].isspace():
+            e -= 1
+        if e <= s:
+            return None
+        return s, e
+
+    def _normalize_ranges(self, text: str, ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        out: list[tuple[int, int]] = []
+        for start, end in ranges:
+            norm = self._normalize_span(text, start, end)
+            if norm is not None:
+                out.append(norm)
+        return out
+
+    def _start_mode_bootstrap_progress(self, run_id: int, mode_label: str) -> None:
+        def tick() -> None:
+            if run_id != self._mode_wrapper_run_seq or not self._mode_wrapper_processing:
+                return
+            cur = self._editor_progress_pct or 2
+            if cur < 35:
+                self._set_editor_progress(cur + 1, mode_label)
+            self.root.after(90, tick)
+
+        self.root.after(120, tick)
+
+    def _compute_midpoint_fracs(self, ranges: list[tuple[int, int]]) -> list[float]:
+        total_chars = max(1, self._text_char_length())
+        fracs: list[float] = []
+        for ws, we in ranges:
+            if we <= ws:
+                continue
+            mid = (ws + we) // 2
+            fracs.append(max(0.0, min(0.999999, mid / total_chars)))
+        return fracs
+
+    def _compute_tag_midpoint_fracs(self, tag_name: str) -> list[float]:
+        ranges = self.text.tag_ranges(tag_name)
+        if not ranges:
+            return []
+        total_chars = max(1, self._text_char_length())
+        fracs: list[float] = []
+        for i in range(0, len(ranges), 2):
+            try:
+                ws = int(self.text.count("1.0", ranges[i], "chars")[0])
+                we = int(self.text.count("1.0", ranges[i + 1], "chars")[0])
+            except Exception:
+                continue
+            if we <= ws:
+                continue
+            mid = (ws + we) // 2
+            fracs.append(max(0.0, min(0.999999, mid / total_chars)))
+        return fracs
+
+    def _compute_displayline_midpoint_fracs(self, ranges: list[tuple[int, int]]) -> list[float]:
+        if not ranges:
+            return []
+        try:
+            total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
+        except Exception:
+            return self._compute_midpoint_fracs(ranges)
+        total_display_lines = max(1, total_display_lines)
+        out: list[float] = []
+        for ws, we in ranges:
+            if we <= ws:
+                continue
+            mid = (ws + we) // 2
+            try:
+                idx_str = self.text.index(f"1.0 + {mid}c")
+                disp = int(self.text.count("1.0", idx_str, "displaylines")[0])
+            except Exception:
+                continue
+            out.append(max(0.0, min(0.999999, disp / total_display_lines)))
+        return out
+
+    def _compute_tag_displayline_midpoint_fracs(self, tag_name: str) -> list[float]:
+        ranges = self.text.tag_ranges(tag_name)
+        if not ranges:
+            return []
+        packed: list[tuple[int, int]] = []
+        for i in range(0, len(ranges), 2):
+            try:
+                ws = int(self.text.count("1.0", ranges[i], "chars")[0])
+                we = int(self.text.count("1.0", ranges[i + 1], "chars")[0])
+            except Exception:
+                continue
+            if we > ws:
+                packed.append((ws, we))
+        return self._compute_displayline_midpoint_fracs(packed)
+
+    def _run_wrapped_mode_scan(
+        self,
+        mode_label: str,
+        active_check,
+        clear_before,
+        analyze_worker,
+        apply_worker,
+        error_title: str,
+    ) -> None:
+        if not active_check() or self._mode_wrapper_processing:
+            return
+
+        self._mode_wrapper_processing = True
+        self._mode_wrapper_run_seq += 1
+        run_id = self._mode_wrapper_run_seq
+        self._acquire_ui_lock()
+        self._set_editor_progress(2, mode_label)
+        self._start_mode_bootstrap_progress(run_id, mode_label)
+        self._lbl_filter.config(text=f"{mode_label} - analyzing...")
+        clear_before()
+        content = self.text.get("1.0", "end-1c")
+
+        def finish(summary: str) -> None:
+            if run_id != self._mode_wrapper_run_seq:
+                return
+            self._mode_wrapper_processing = False
+            self._set_editor_progress(100, mode_label)
+            self._lbl_filter.config(text=summary)
+            if self._mode_uses_density_band():
+                self._request_density_redraw()
+            self._update_density_viewport()
+            self._update_pacing_viewport()
+            self.root.after(120, lambda: self._set_editor_progress(None, ""))
+            self._release_ui_lock()
+
+        def complete(result, error: Exception | None) -> None:
+            if run_id != self._mode_wrapper_run_seq:
+                return
+            if error is not None:
+                self._mode_wrapper_processing = False
+                self._set_editor_progress(None, "")
+                self._release_ui_lock()
+                self._lbl_filter.config(text="")
+                self.set_editor_mode(EDITOR_MODE_OFF)
+                messagebox.showerror(error_title, str(error))
+                return
+            self._set_editor_progress(56, mode_label)
+            apply_worker(run_id, result, finish)
+
+        def worker() -> None:
+            try:
+                last_progress = -1
+
+                def on_scan_progress(raw_pct: int) -> None:
+                    nonlocal last_progress
+                    pct = 2 + int((max(0, min(100, raw_pct)) / 100) * 52)
+                    if pct == last_progress:
+                        return
+                    last_progress = pct
+                    self.root.after(0, lambda p=pct: self._set_editor_progress(p, mode_label))
+
+                result = analyze_worker(content, on_scan_progress)
+                self.root.after(0, lambda r=result: complete(r, None))
+            except Exception as exc:
+                self.root.after(0, lambda e=exc: complete(None, e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _mark_emotion_needs_update(self) -> None:
+        if not self._emotion_active:
+            return
+        self._emotion_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Emotion catcher - changes pending (click Refresh)")
+
+    def _mark_dialogue_tags_needs_update(self) -> None:
+        if not self._dialogue_tag_active:
+            return
+        self._dialogue_tag_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Dialogue tags - changes pending (click Refresh)")
+
+    def _mark_echo_needs_update(self) -> None:
+        if not self._echo_active:
+            return
+        self._echo_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Echo radar - changes pending (click Refresh)")
+
+    def _mark_pacing_needs_update(self) -> None:
+        if not self._pacing_active:
+            return
+        self._pacing_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Rhythm/pacing - changes pending (click Refresh)")
+
+    def _mark_typography_needs_update(self) -> None:
+        return
+
+    def _run_emotion_catcher_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            hits = analyze_emotion_words(content, progress_callback=progress_cb)
+            raw_ranges = [(ws, we) for ws, we, _cls in hits]
+            return self._normalize_ranges(content, raw_ranges)
+
+        def apply_worker(run_id: int, ranges: list[tuple[int, int]], done) -> None:
+            self._emotion_hits = ranges
+
+            def wrapped_done() -> None:
+                # Keep emotion density markers synced to what is actually tagged
+                # in the editor text widget.
+                if ranges and not self.text.tag_ranges("emotion_hit"):
+                    for ws, we in ranges:
+                        if we > ws:
+                            self.text.tag_add("emotion_hit", f"1.0 + {ws}c", f"1.0 + {we}c")
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._emotion_hit_fracs = fracs
+                    if ranges:
+                        done(f"Emotion catcher - {len(ranges)} hit(s)")
+                    else:
+                        done("Emotion catcher - no explicit emotion words")
+
+                self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs)
+
+            self._apply_tag_ranges_progressive(run_id, "Emotion", ranges, "emotion_hit", wrapped_done)
+
+        self._emotion_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Emotion",
+            active_check=lambda: self._emotion_active,
+            clear_before=self._clear_emotion_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Emotion Catcher Error",
+        )
+
+    def _run_dialogue_tags_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            hits = analyze_dialogue_tags(content)
+            progress_cb(100)
+            ranges = [(ws, we) for ws, we, _cls in hits]
+            return self._normalize_ranges(content, ranges)
+
+        def apply_worker(run_id: int, ranges: list[tuple[int, int]], done) -> None:
+            self._dialogue_tag_hits = ranges
+
+            def wrapped_done() -> None:
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._dialogue_tag_hit_fracs = fracs
+                    if ranges:
+                        done(f"Dialogue tags - {len(ranges)} lint hit(s)")
+                    else:
+                        done("Dialogue tags - no lint hits")
+
+                self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs)
+
+            self._apply_tag_ranges_progressive(run_id, "DialogueTags", ranges, "dialogue_tag", wrapped_done)
+
+        self._dialogue_tag_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="DialogueTags",
+            active_check=lambda: self._dialogue_tag_active,
+            clear_before=self._clear_dialogue_tag_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Dialogue Tags Error",
+        )
+
+    def _run_typography_scan_mode(self) -> None:
+        self._lbl_filter.config(text="Typography mode is disabled")
+
     def _clear_echo_highlights(self) -> None:
         self.text.tag_remove("echo_hit", "1.0", tk.END)
+        self.text.tag_remove("echo_focus", "1.0", tk.END)
+        self.text.tag_remove("echo_focus_cursor", "1.0", tk.END)
+        self._echo_hits = []
+        self._echo_hit_fracs = []
+        self._echo_groups = {}
+        self._echo_token_hits = []
+        self._echo_token_starts = []
+        self._echo_focus_word = ""
+        if self._echo_focus_refresh_job is not None:
+            try:
+                self.root.after_cancel(self._echo_focus_refresh_job)
+            except Exception:
+                pass
+            self._echo_focus_refresh_job = None
 
     def _clear_pacing_highlights(self) -> None:
-        self.text.tag_remove("pacing_short", "1.0", tk.END)
-        self.text.tag_remove("pacing_long", "1.0", tk.END)
-        self._pacing_lane_hits = []
+        for tag_name, _fg, _bg in PACING_TAG_STYLES:
+            self.text.tag_remove(tag_name, "1.0", tk.END)
+        self._pacing_heat_spans = []
         self._hide_pacing_lane()
 
     def run_pacing_scan(self) -> None:
-        if self._is_editor_processing():
+        if self._active_editor_mode != EDITOR_MODE_PACING:
+            self.set_editor_mode(EDITOR_MODE_PACING)
             return
+        self._run_pacing_scan_mode()
 
-        text = self.text.get("1.0", "end-1c")
-        self._clear_pacing_highlights()
-        if not text.strip():
-            messagebox.showinfo("Rhythm & Pacing", "No text to analyze.")
-            return
+    def _run_pacing_scan_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            bands = analyze_sentence_pacing(
+                content,
+                short_max_words=PACING_SHORT_WORDS,
+                average_words=PACING_AVERAGE_WORDS,
+                long_min_words=PACING_LONG_WORDS,
+                progress_callback=progress_cb,
+            )
+            return bands
 
-        bands = analyze_sentence_pacing(text, short_max_words=8, long_min_words=30)
-        if not bands:
-            messagebox.showinfo("Rhythm & Pacing", "No short or long sentence outliers found.")
-            return
+        def apply_worker(run_id: int, bands: list[tuple[int, int, float, int]], done) -> None:
+            total = len(bands)
+            if total == 0:
+                done("Rhythm & pacing - no sentences mapped")
+                return
 
-        total_chars = max(1, self._text_char_length())
-        short_count = 0
-        long_count = 0
-        for start, end, cls, _wc in bands:
-            tag = "pacing_short" if cls == "short" else "pacing_long"
-            self.text.tag_add(tag, f"1.0 + {start}c", f"1.0 + {end}c")
-            if cls == "short":
-                short_count += 1
-            else:
-                long_count += 1
-                mid = (start + end) // 2
-                self._pacing_lane_hits.append(max(0.0, min(0.999999, mid / total_chars)))
+            idx = 0
+            step = 320
+            very_short_count = 0
+            long_count = 0
+            total_chars = max(1, self._text_char_length())
+            current_text = self.text.get("1.0", "end-1c")
 
-        if self._pacing_lane_hits:
-            self._show_pacing_lane()
-        self._redraw_pacing_lane()
-        self._lbl_filter.config(text=f"Pacing scan - short: {short_count}, long: {long_count}")
-        messagebox.showinfo(
-            "Rhythm & Pacing",
-            f"Applied pacing highlights.\nShort sentences: {short_count}\nLong sentences: {long_count}",
+            def run_chunk() -> None:
+                nonlocal idx, very_short_count, long_count
+                if run_id != self._mode_wrapper_run_seq:
+                    return
+                end = min(total, idx + step)
+                for start, stop, heat, wc in bands[idx:end]:
+                    norm = self._normalize_span(current_text, start, stop)
+                    if norm is None:
+                        continue
+                    start, stop = norm
+                    tag = self._pacing_tag_from_heat(heat)
+                    self.text.tag_add(tag, f"1.0 + {start}c", f"1.0 + {stop}c")
+                    if wc <= PACING_SHORT_WORDS:
+                        very_short_count += 1
+                    elif wc >= PACING_LONG_WORDS:
+                        long_count += 1
+                    start_frac = max(0.0, min(0.999999, start / total_chars))
+                    stop_frac = max(start_frac, min(0.999999, stop / total_chars))
+                    self._pacing_heat_spans.append((start_frac, stop_frac, heat))
+                idx = end
+                pct = 56 + int((idx / total) * 42)
+                self._set_editor_progress(pct, "Pacing")
+                if idx < total:
+                    self.root.after(1, run_chunk)
+                    return
+                if self._pacing_heat_spans:
+                    self._show_pacing_lane()
+                self._redraw_pacing_lane()
+                done(
+                    f"Rhythm & pacing - <= {PACING_SHORT_WORDS} words: {very_short_count}, "
+                    f">= {PACING_LONG_WORDS} words: {long_count}"
+                )
+
+            run_chunk()
+
+        self._pacing_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Pacing",
+            active_check=lambda: self._pacing_active,
+            clear_before=self._clear_pacing_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Rhythm & Pacing Error",
         )
 
     def _show_pacing_lane(self) -> None:
@@ -1505,10 +2176,91 @@ class EditorialApp:
         self._pacing_viewport_id = None
         w = max(8, self._pacing_lane.winfo_width())
         h = max(20, self._pacing_lane.winfo_height())
-        for frac in self._pacing_lane_hits:
-            y = max(1, min(h - 1, int(frac * h)))
-            self._pacing_lane.create_line(1, y, w - 2, y, fill=PURPLE_BG)
+        row_scores = [0.0] * h
+        row_weights = [0] * h
+        row_min = [0.0] * h
+        row_max = [0.0] * h
+        for start_frac, stop_frac, heat in self._pacing_heat_spans:
+            y1 = max(0, min(h - 1, int(start_frac * (h - 1))))
+            y2 = max(y1, min(h - 1, int(math.ceil(stop_frac * (h - 1)))))
+            for y in range(y1, y2 + 1):
+                row_scores[y] += heat
+                row_weights[y] += 1
+                row_min[y] = min(row_min[y], heat)
+                row_max[y] = max(row_max[y], heat)
+        weights = (1, 2, 3, 2, 1)
+        row_heat = [0.0] * h
+        for y in range(h):
+            score_total = 0.0
+            weight_total = 0
+            extreme_total = 0.0
+            extreme_weight_total = 0
+            for offset, weight in zip(range(-2, 3), weights):
+                yy = y + offset
+                if yy < 0 or yy >= h or row_weights[yy] == 0:
+                    continue
+                avg_heat = row_scores[yy] / row_weights[yy]
+                strongest = row_max[yy] if abs(row_max[yy]) >= abs(row_min[yy]) else row_min[yy]
+                score_total += avg_heat * weight
+                weight_total += weight
+                extreme_total += strongest * weight
+                extreme_weight_total += weight
+            if weight_total == 0 or extreme_weight_total == 0:
+                row_heat[y] = 0.0
+                continue
+            smoothed_avg = score_total / weight_total
+            smoothed_extreme = extreme_total / extreme_weight_total
+            row_heat[y] = (smoothed_avg * 0.58) + (smoothed_extreme * 0.42)
+
+        peak_positive = max((value for value in row_heat if value > 0.0), default=0.0)
+        peak_negative = max((-value for value in row_heat if value < 0.0), default=0.0)
+
+        for y in range(h):
+            heat = row_heat[y]
+            if heat > 0.0 and peak_positive > 0.0:
+                normalized = heat / peak_positive
+            elif heat < 0.0 and peak_negative > 0.0:
+                normalized = heat / peak_negative
+            else:
+                normalized = 0.0
+            normalized = math.copysign(abs(normalized) ** 0.82, normalized)
+            self._pacing_lane.create_line(
+                1,
+                y,
+                w - 2,
+                y,
+                fill=self._pacing_heat_color(normalized),
+            )
         self._update_pacing_viewport()
+
+    def _pacing_tag_from_heat(self, heat: float) -> str:
+        if heat <= -0.7:
+            return "pacing_cool_3"
+        if heat <= -0.35:
+            return "pacing_cool_2"
+        if heat < -0.1:
+            return "pacing_cool_1"
+        if heat < 0.15:
+            return "pacing_neutral"
+        if heat < 0.5:
+            return "pacing_warm_1"
+        if heat < 0.85:
+            return "pacing_warm_2"
+        return "pacing_hot"
+
+    def _blend_hex_color(self, left: str, right: str, amount: float) -> str:
+        amount = max(0.0, min(1.0, amount))
+        left_rgb = tuple(int(left[i:i + 2], 16) for i in (1, 3, 5))
+        right_rgb = tuple(int(right[i:i + 2], 16) for i in (1, 3, 5))
+        blended = tuple(
+            round(lv + ((rv - lv) * amount)) for lv, rv in zip(left_rgb, right_rgb)
+        )
+        return f"#{blended[0]:02x}{blended[1]:02x}{blended[2]:02x}"
+
+    def _pacing_heat_color(self, heat: float) -> str:
+        if heat <= 0.0:
+            return self._blend_hex_color("#4ea4ff", "#58d68d", heat + 1.0)
+        return self._blend_hex_color("#58d68d", "#ff6b6b", heat)
 
     def _update_pacing_viewport(self) -> None:
         if not self._pacing_lane_visible:
@@ -1527,77 +2279,190 @@ class EditorialApp:
             self._pacing_lane.tag_raise(self._pacing_viewport_id)
 
     def run_echo_radar(self) -> None:
-        if self._is_editor_processing():
+        if self._active_editor_mode != EDITOR_MODE_ECHO:
+            self.set_editor_mode(EDITOR_MODE_ECHO)
+            return
+        self._run_echo_radar_mode()
+
+    def _run_echo_radar_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return {"ranges": [], "word_counts": {}, "token_hits": [], "groups": {}}
+
+            token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+            filler_words = {
+                "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
+                "well", "just", "really", "very", "quite", "actually",
+                "basically", "literally", "perhaps", "maybe",
+            }
+            blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
+            blocked_words.update(filler_words)
+
+            tokens: list[tuple[str, int, int, int]] = []
+            total_chars = max(1, len(content))
+            for i, m in enumerate(token_re.finditer(content)):
+                word = m.group(0).lower().replace("\u2019", "'")
+                clean = word.replace("'", "")
+                if clean.isalpha() and len(clean) >= 4 and word not in blocked_words:
+                    tokens.append((word, m.start(), m.end(), len(tokens)))
+                if i % 250 == 0:
+                    progress_cb(int((m.end() / total_chars) * 55))
+
+            if not tokens:
+                progress_cb(100)
+                return {"ranges": [], "word_counts": {}, "token_hits": [], "groups": {}}
+
+            window_words = self._echo_focus_window_words
+            grouped: dict[str, list[tuple[int, int, int]]] = {}
+            for word, start, end, token_idx in tokens:
+                grouped.setdefault(word, []).append((start, end, token_idx))
+
+            filtered_groups: dict[str, list[tuple[int, int, int]]] = {}
+            word_counts: dict[str, int] = {}
+            token_hits: list[tuple[str, int, int, int]] = []
+            total_words = max(1, len(grouped))
+
+            for idx, (word, occurrences) in enumerate(grouped.items()):
+                if len(occurrences) < 2:
+                    continue
+                kept: list[tuple[int, int, int]] = []
+                for i, occ in enumerate(occurrences):
+                    prev_gap = occ[2] - occurrences[i - 1][2] if i > 0 else 999999
+                    next_gap = occurrences[i + 1][2] - occ[2] if i + 1 < len(occurrences) else 999999
+                    if min(prev_gap, next_gap) <= window_words:
+                        kept.append(occ)
+                if len(kept) >= 2:
+                    filtered_groups[word] = kept
+                    word_counts[word] = len(kept)
+                    for start, end, token_idx in kept:
+                        token_hits.append((word, start, end, token_idx))
+                if idx % 40 == 0:
+                    progress_cb(55 + int((idx / total_words) * 40))
+
+            token_hits.sort(key=lambda item: item[1])
+            ranges = [(start, end) for _word, start, end, _idx in token_hits]
+            ranges = self._normalize_ranges(content, ranges)
+
+            progress_cb(100)
+            return {
+                "ranges": ranges,
+                "word_counts": word_counts,
+                "token_hits": token_hits,
+                "groups": filtered_groups,
+            }
+
+        def apply_worker(run_id: int, result: dict[str, object], done) -> None:
+            ranges = list(result.get("ranges", []))
+            word_counts = dict(result.get("word_counts", {}))
+            token_hits = list(result.get("token_hits", []))
+            groups = dict(result.get("groups", {}))
+            self._echo_hits = ranges
+            self._echo_hit_fracs = self._compute_midpoint_fracs(ranges)
+            self._echo_token_hits = token_hits
+            self._echo_groups = groups
+            self._echo_token_starts = [start for _word, start, _end, _token_idx in token_hits]
+
+            def wrapped_done() -> None:
+                self._refresh_echo_focus_highlights(force=True)
+                if word_counts:
+                    done(
+                        f"Echo radar - tracking {len(ranges)} local echo hit(s) "
+                        f"across {len(word_counts)} word(s)"
+                    )
+                else:
+                    done("Echo radar - no nearby repeats with current sensitivity")
+
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._echo_hit_fracs = fracs
+                    if self._density_visible:
+                        self._request_density_redraw()
+
+                self.root.after(
+                    1,
+                    lambda: self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs),
+                )
+
+            self._apply_tag_ranges_progressive(run_id, "Echo", ranges, "echo_hit", wrapped_done)
+
+        self._echo_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Echo",
+            active_check=lambda: self._echo_active,
+            clear_before=self._clear_echo_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Echo Radar Error",
+        )
+
+    def _schedule_echo_focus_refresh(self) -> None:
+        if not self._echo_active or self._mode_wrapper_processing:
+            return
+        if self._echo_focus_refresh_job is not None:
+            try:
+                self.root.after_cancel(self._echo_focus_refresh_job)
+            except Exception:
+                pass
+        self._echo_focus_refresh_job = self.root.after(24, self._refresh_echo_focus_highlights)
+
+    def _refresh_echo_focus_highlights(self, force: bool = False) -> None:
+        self._echo_focus_refresh_job = None
+        if not self._echo_active:
             return
 
-        text = self.text.get("1.0", "end-1c")
-        self._clear_echo_highlights()
-        if not text.strip():
-            messagebox.showinfo("Proximity Echo Radar", "No text to analyze.")
+        self.text.tag_remove("echo_focus", "1.0", tk.END)
+        self.text.tag_remove("echo_focus_cursor", "1.0", tk.END)
+
+        if not self._echo_token_hits:
             return
 
-        token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
-        filler_words = {
-            "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
-            "well", "just", "really", "very", "quite", "actually",
-            "basically", "literally", "perhaps", "maybe",
-        }
-        blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
-        blocked_words.update(filler_words)
+        try:
+            caret = int(self.text.count("1.0", "insert", "chars")[0])
+        except Exception:
+            caret = 0
 
-        tokens: list[tuple[str, int, int]] = []
-        for m in token_re.finditer(text):
-            word = m.group(0).lower().replace("\u2019", "'")
-            clean = word.replace("'", "")
-            if not clean.isalpha() or len(clean) < 3 or word in blocked_words:
+        idx = bisect.bisect_right(self._echo_token_starts, caret) - 1
+        candidate_indexes = [idx, idx + 1]
+        active_token: tuple[str, int, int, int] | None = None
+        for cand in candidate_indexes:
+            if cand < 0 or cand >= len(self._echo_token_hits):
                 continue
-            tokens.append((word, m.start(), m.end()))
+            word, start, end, token_idx = self._echo_token_hits[cand]
+            if start - 1 <= caret <= end + 1:
+                active_token = (word, start, end, token_idx)
+                break
 
-        if not tokens:
-            messagebox.showinfo("Proximity Echo Radar", "No uncommon words found to compare.")
+        if active_token is None:
+            if force:
+                self._lbl_filter.config(
+                    text=f"Echo radar - tracking {len(self._echo_hits)} local hit(s); place cursor on a highlighted word"
+                )
             return
 
-        window_words = 300
-        last_seen: dict[str, int] = {}
-        flagged: set[int] = set()
-        gap_stats: dict[str, list[int]] = {}
+        word, start, end, token_idx = active_token
+        self._echo_focus_word = word
 
-        for idx, (word, _start, _end) in enumerate(tokens):
-            prev = last_seen.get(word)
-            if prev is not None:
-                gap = idx - prev
-                if gap <= window_words:
-                    flagged.add(prev)
-                    flagged.add(idx)
-                    gap_stats.setdefault(word, []).append(gap)
-            last_seen[word] = idx
+        candidates = self._echo_groups.get(word, [])
+        window = self._echo_focus_window_words
+        nearby: list[tuple[int, int]] = []
+        for ws, we, widx in candidates:
+            if abs(widx - token_idx) <= window:
+                nearby.append((ws, we))
 
-        if not flagged:
-            messagebox.showinfo(
-                "Proximity Echo Radar",
-                f"No proximity echoes found within {window_words} words.",
+        for ws, we in nearby:
+            self.text.tag_add("echo_focus", f"1.0 + {ws}c", f"1.0 + {we}c")
+        self.text.tag_remove("echo_focus", f"1.0 + {start}c", f"1.0 + {end}c")
+        self.text.tag_add("echo_focus_cursor", f"1.0 + {start}c", f"1.0 + {end}c")
+
+        self._lbl_filter.config(
+            text=(
+                f"Echo radar - \"{word}\" nearby echoes: {len(nearby)} "
+                f"(window {window} words)"
             )
-            return
-
-        word_counts: dict[str, int] = {}
-        for idx in sorted(flagged):
-            word, start, end = tokens[idx]
-            self.text.tag_add("echo_hit", f"1.0 + {start}c", f"1.0 + {end}c")
-            word_counts[word] = word_counts.get(word, 0) + 1
-
-        ranked = sorted(
-            word_counts.items(),
-            key=lambda kv: (-kv[1], min(gap_stats.get(kv[0], [window_words]))),
         )
-        top = ranked[:20]
-        lines = [f"{word}  (hits: {count}, closest gap: {min(gap_stats.get(word, [window_words]))})" for word, count in top]
-        message = (
-            f"Highlighted {len(flagged)} echo occurrence(s) across {len(word_counts)} word(s).\n"
-            f"Window: {window_words} words\n\n"
-            "Top echoes:\n" + "\n".join(lines)
-        )
-        self._lbl_filter.config(text=f"Echo radar - {len(flagged)} hits in {len(word_counts)} words")
-        messagebox.showinfo("Proximity Echo Radar", message)
 
     def select_all(self) -> None:
         self.text.tag_add(tk.SEL, "1.0", tk.END)
@@ -1986,14 +2851,14 @@ class EditorialApp:
         self._resize_settle_job = self.root.after(280, settle)
 
     def _schedule_layout_refresh(self) -> None:
-        if (not self.filter_active and not self._weak_mod_active and not self._punct_active) or self._is_editor_processing() or self._filter_update_needed:
+        if (not self._mode_uses_density_band() and not self._punct_active) or self._is_editor_processing():
             return
         if self._layout_refresh_job is not None:
             self.root.after_cancel(self._layout_refresh_job)
 
         def run() -> None:
             self._layout_refresh_job = None
-            if (not self.filter_active and not self._weak_mod_active and not self._punct_active) or self._is_editor_processing():
+            if (not self._mode_uses_density_band() and not self._punct_active) or self._is_editor_processing():
                 return
             self._request_density_redraw()
 
@@ -2155,6 +3020,14 @@ class EditorialApp:
                 (BLUE_FG, "Dash"),
                 (WHITE_FG, "Ellipsis"),
                 (RED_FG, "Loud"),
+            ],
+            EDITOR_MODE_DTAG: [(ORANGE_FG, "Tag Lint")],
+            EDITOR_MODE_EMOTION: [(RED_FG, "Emotion Word")],
+            EDITOR_MODE_ECHO: [(ACCENT, "Echo Repeat")],
+            EDITOR_MODE_PACING: [
+                ("#4ea4ff", f"Short (<= {PACING_SHORT_WORDS})"),
+                (GREEN_FG, f"Balanced (~{PACING_AVERAGE_WORDS})"),
+                (RED_FG, f"Long (>= {PACING_LONG_WORDS})"),
             ],
         }
 
@@ -2455,6 +3328,8 @@ class EditorialApp:
         self._update_status()
         self._apply_first_line_indent()
         self._redraw_lineno()
+        if self._echo_active and not self._mode_wrapper_processing:
+            self._schedule_echo_focus_refresh()
         if self._skip_filter_schedule_once:
             self._skip_filter_schedule_once = False
             return
@@ -2483,6 +3358,8 @@ class EditorialApp:
 
     def _on_cursor_move(self, _event=None) -> None:
         self._update_status()
+        if self._echo_active and not self._mode_wrapper_processing:
+            self._schedule_echo_focus_refresh()
 
 
 # ---------------------------------------------------------------------------

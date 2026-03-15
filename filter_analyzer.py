@@ -364,6 +364,30 @@ def analyze_dialogue_mechanics(text: str) -> list[tuple[int, int, str]]:
     return unique_hits
 
 
+def analyze_sentence_pacing(
+    text: str,
+    short_max_words: int = 8,
+    long_min_words: int = 30,
+) -> list[tuple[int, int, str, int]]:
+    """Return sentence pacing bands as (start, end, class, word_count)."""
+    if not text.strip():
+        return []
+
+    nlp = _get_nlp()
+    doc = nlp(text)
+    bands: list[tuple[int, int, str, int]] = []
+
+    for sent in doc.sents:
+        words = [t for t in sent if t.is_alpha]
+        wc = len(words)
+        if wc <= short_max_words:
+            bands.append((sent.start_char, sent.end_char, "short", wc))
+        elif wc >= long_min_words:
+            bands.append((sent.start_char, sent.end_char, "long", wc))
+
+    return bands
+
+
 def build_console_report(
     text: str,
     pov_character_names: set[str] | None = None,

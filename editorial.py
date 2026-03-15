@@ -35,7 +35,7 @@ from spacy.lang.en.stop_words import STOP_WORDS
 
 from editorial_indicators import IndicatorSubsystem
 from editorial_modes import ModeSubsystem
-from filter_analyzer import analyze_dialogue_mechanics, analyze_filter_words, analyze_weak_modifiers
+from filter_analyzer import analyze_dialogue_mechanics, analyze_filter_words, analyze_sentence_pacing, analyze_weak_modifiers
 
 APP_NAME = "Editorial"
 APP_VERSION = "1.1.0"
@@ -168,6 +168,9 @@ class EditorialApp:
         self._editor_progress_pct: int | None = None
         self._tools_mode_entries: list[tuple[int, str, str]] = []
         self._tools_refresh_index: int | None = None
+        self._pacing_lane_visible: bool = False
+        self._pacing_lane_hits: list[float] = []
+        self._pacing_viewport_id: int | None = None
         self._find_dialog: tk.Toplevel | None = None
         self._find_var = tk.StringVar()
         self._replace_var = tk.StringVar()
@@ -296,6 +299,7 @@ class EditorialApp:
         tm.add_command(label="Set POV Names…", command=self.show_pov_names_dialog)
         tm.add_command(label="Typography Standardizer", command=self.standardize_typography)
         tm.add_command(label="Proximity Echo Radar", command=self.run_echo_radar)
+        tm.add_command(label="Rhythm & Pacing Scan", command=self.run_pacing_scan)
         tm.add_separator()
         tm.add_command(label="Word Count…", command=self._word_count_dialog)
         bar.add_cascade(label="Tools", menu=tm)
@@ -550,6 +554,15 @@ class EditorialApp:
         self._quote_dots.bind("<B1-Motion>", self._on_quote_band_drag)
         self._quote_dots.bind("<Configure>", self._on_density_configure)
 
+        # Rhythm pacing lane (long sentence density)
+        self._pacing_lane = tk.Canvas(
+            container, bg=BG_SURFACE, width=12, highlightthickness=0,
+            cursor="hand2",
+        )
+        self._pacing_lane.bind("<Button-1>", self._on_pacing_lane_click)
+        self._pacing_lane.bind("<B1-Motion>", self._on_pacing_lane_click)
+        self._pacing_lane.bind("<Configure>", lambda _e: self._redraw_pacing_lane())
+
         # Line-number canvas
         self._lineno = tk.Canvas(
             container, bg=BG_SURFACE, width=54, highlightthickness=0,
@@ -626,6 +639,17 @@ class EditorialApp:
             "echo_hit",
             background=BG_OVERLAY,
             foreground=TEXT,
+            underline=1,
+        )
+        self.text.tag_configure(
+            "pacing_short",
+            background="#24344a",
+            foreground="#a6d8ff",
+        )
+        self.text.tag_configure(
+            "pacing_long",
+            background=PURPLE_BG,
+            foreground=PURPLE_FG,
             underline=1,
         )
         self.text.tag_configure("find_match",
@@ -724,12 +748,14 @@ class EditorialApp:
         self.text.yview(*args)
         self._redraw_lineno()
         self._update_density_viewport()
+        self._update_pacing_viewport()
 
     def _on_text_scroll(self, first: str, last: str) -> None:
         """Called when the text widget scrolls for any reason."""
         self._scrollbar.set(first, last)
         self._redraw_lineno()
         self._update_density_viewport()
+        self._update_pacing_viewport()
 
     # -------------------------------------------------------------- file I/O
 
@@ -737,6 +763,7 @@ class EditorialApp:
         if not self._confirm_discard():
             return
         self.text.delete("1.0", tk.END)
+        self._clear_pacing_highlights()
         self._apply_first_line_indent()
         self.text.edit_reset()
         self.current_file = None
@@ -760,6 +787,7 @@ class EditorialApp:
             return
         self.text.delete("1.0", tk.END)
         self.text.insert("1.0", content)
+        self._clear_pacing_highlights()
         self._apply_first_line_indent()
         self.text.edit_reset()
         self.current_file = path
@@ -1403,6 +1431,101 @@ class EditorialApp:
     def _clear_echo_highlights(self) -> None:
         self.text.tag_remove("echo_hit", "1.0", tk.END)
 
+    def _clear_pacing_highlights(self) -> None:
+        self.text.tag_remove("pacing_short", "1.0", tk.END)
+        self.text.tag_remove("pacing_long", "1.0", tk.END)
+        self._pacing_lane_hits = []
+        self._hide_pacing_lane()
+
+    def run_pacing_scan(self) -> None:
+        if self._is_editor_processing():
+            return
+
+        text = self.text.get("1.0", "end-1c")
+        self._clear_pacing_highlights()
+        if not text.strip():
+            messagebox.showinfo("Rhythm & Pacing", "No text to analyze.")
+            return
+
+        bands = analyze_sentence_pacing(text, short_max_words=8, long_min_words=30)
+        if not bands:
+            messagebox.showinfo("Rhythm & Pacing", "No short or long sentence outliers found.")
+            return
+
+        total_chars = max(1, self._text_char_length())
+        short_count = 0
+        long_count = 0
+        for start, end, cls, _wc in bands:
+            tag = "pacing_short" if cls == "short" else "pacing_long"
+            self.text.tag_add(tag, f"1.0 + {start}c", f"1.0 + {end}c")
+            if cls == "short":
+                short_count += 1
+            else:
+                long_count += 1
+                mid = (start + end) // 2
+                self._pacing_lane_hits.append(max(0.0, min(0.999999, mid / total_chars)))
+
+        if self._pacing_lane_hits:
+            self._show_pacing_lane()
+        self._redraw_pacing_lane()
+        self._lbl_filter.config(text=f"Pacing scan - short: {short_count}, long: {long_count}")
+        messagebox.showinfo(
+            "Rhythm & Pacing",
+            f"Applied pacing highlights.\nShort sentences: {short_count}\nLong sentences: {long_count}",
+        )
+
+    def _show_pacing_lane(self) -> None:
+        if self._pacing_lane_visible:
+            return
+        self._pacing_lane.pack(side=tk.LEFT, fill=tk.Y, before=self._lineno)
+        self._pacing_lane_visible = True
+
+    def _hide_pacing_lane(self) -> None:
+        if not self._pacing_lane_visible:
+            return
+        self._pacing_lane.pack_forget()
+        self._pacing_lane_visible = False
+        self._pacing_viewport_id = None
+        self._pacing_lane.delete("all")
+
+    def _on_pacing_lane_click(self, event) -> None:
+        if not self._pacing_lane_visible:
+            return
+        h = max(2, self._pacing_lane.winfo_height())
+        frac = max(0.0, min(1.0, event.y / (h - 1)))
+        self.text.yview_moveto(frac)
+        self._redraw_lineno()
+        self._update_density_viewport()
+        self._update_pacing_viewport()
+
+    def _redraw_pacing_lane(self) -> None:
+        if not self._pacing_lane_visible:
+            return
+        self._pacing_lane.delete("all")
+        self._pacing_viewport_id = None
+        w = max(8, self._pacing_lane.winfo_width())
+        h = max(20, self._pacing_lane.winfo_height())
+        for frac in self._pacing_lane_hits:
+            y = max(1, min(h - 1, int(frac * h)))
+            self._pacing_lane.create_line(1, y, w - 2, y, fill=PURPLE_BG)
+        self._update_pacing_viewport()
+
+    def _update_pacing_viewport(self) -> None:
+        if not self._pacing_lane_visible:
+            return
+        w = max(8, self._pacing_lane.winfo_width())
+        h = max(20, self._pacing_lane.winfo_height())
+        first, last = self.text.yview()
+        y1 = int(first * h)
+        y2 = max(y1 + 6, int(last * h))
+        if self._pacing_viewport_id is None:
+            self._pacing_viewport_id = self._pacing_lane.create_rectangle(
+                0, y1, w - 1, y2, outline=ACCENT, width=1
+            )
+        else:
+            self._pacing_lane.coords(self._pacing_viewport_id, 0, y1, w - 1, y2)
+            self._pacing_lane.tag_raise(self._pacing_viewport_id)
+
     def run_echo_radar(self) -> None:
         if self._is_editor_processing():
             return
@@ -1817,6 +1940,8 @@ class EditorialApp:
             return
         if self.filter_active or self._weak_mod_active or self._punct_active:
             self._request_density_redraw()
+        if self._pacing_lane_visible:
+            self._redraw_pacing_lane()
 
     def _on_root_configure(self, event) -> None:
         if event.widget is not self.root:
@@ -1854,6 +1979,8 @@ class EditorialApp:
             self._resize_in_progress = False
             if self.filter_active or self._weak_mod_active or self._punct_active:
                 self._request_density_redraw()
+            if self._pacing_lane_visible:
+                self._redraw_pacing_lane()
 
         # Redraw bars/dots after resize settles, but avoid expensive cache rebuilds.
         self._resize_settle_job = self.root.after(280, settle)

@@ -50,6 +50,7 @@ from filter_analyzer import (
     analyze_filter_words,
     analyze_sentence_pacing,
     analyze_weak_modifiers,
+    analyze_typography,
 )
 
 APP_NAME = "Editorial"
@@ -125,6 +126,7 @@ EDITOR_MODE_DTAG = "dialogue_tags"
 EDITOR_MODE_EMOTION = "emotion_catcher"
 EDITOR_MODE_ECHO = "echo_radar"
 EDITOR_MODE_PACING = "rhythm_pacing"
+EDITOR_MODE_TYPOGRAPHY = "typography_scan"
 
 EDITOR_MODES: list[tuple[str, str]] = [
     ("Editor Off", EDITOR_MODE_OFF),
@@ -135,6 +137,7 @@ EDITOR_MODES: list[tuple[str, str]] = [
     ("Emotion Catcher", EDITOR_MODE_EMOTION),
     ("Proximity Echo Radar", EDITOR_MODE_ECHO),
     ("Rhythm & Pacing", EDITOR_MODE_PACING),
+    ("Typography Scan", EDITOR_MODE_TYPOGRAPHY),
 ]
 
 
@@ -1069,6 +1072,7 @@ class EditorialApp:
         self._emotion_update_needed = False
         self._echo_update_needed = False
         self._pacing_update_needed = False
+        self._typography_update_needed = False
         self._hide_filter_refresh_button()
 
         self.filter_active = False
@@ -1086,6 +1090,7 @@ class EditorialApp:
         self._clear_emotion_highlights()
         self._clear_echo_highlights()
         self._clear_pacing_highlights()
+        self._clear_typography_highlights()
         self._hide_quote_band()
         self._hide_density_band()
 
@@ -1133,6 +1138,12 @@ class EditorialApp:
         if mode == EDITOR_MODE_PACING:
             self._pacing_active = True
             self._run_pacing_scan_mode()
+            return
+
+        if mode == EDITOR_MODE_TYPOGRAPHY:
+            self._show_density_band()
+            self._typography_active = True
+            self._run_typography_scan_mode()
             return
 
     def save_file(self) -> None:
@@ -1614,7 +1625,38 @@ class EditorialApp:
         self._mark_active_mode_needs_update()
 
     def standardize_typography(self) -> None:
-        messagebox.showinfo("Typography", "Typography mode is disabled for now.")
+        if self._is_editor_processing():
+            messagebox.showinfo("Typography", "Please wait for current analysis to finish.")
+            return
+
+        content = self.text.get("1.0", "end-1c")
+        if not content.strip():
+            return
+
+        new_content, total_changes = self._standardize_typography_text(content)
+
+        if total_changes == 0:
+            messagebox.showinfo("Typography", "No typography issues found.")
+            return
+
+        try:
+            self.text.edit_separator()
+
+            first, last = self.text.yview()
+            insert_idx = self.text.index(tk.INSERT)
+
+            self.text.delete("1.0", tk.END)
+            self.text.insert("1.0", new_content)
+
+            self.text.mark_set(tk.INSERT, insert_idx)
+            self.text.yview_moveto(first)
+
+            self.text.edit_separator()
+            self._mark_active_mode_needs_update()
+            self._update_status()
+            messagebox.showinfo("Typography", f"Standardized {total_changes} typography issue(s).")
+        except tk.TclError as exc:
+            messagebox.showerror("Typography Error", f"Failed to apply changes: {exc}")
 
     def _standardize_typography_text(self, text: str) -> tuple[str, int]:
         working = text
@@ -2075,7 +2117,40 @@ class EditorialApp:
         )
 
     def _run_typography_scan_mode(self) -> None:
-        self._lbl_filter.config(text="Typography mode is disabled")
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            hits = analyze_typography(content, progress_callback=progress_cb)
+            return [(ws, we) for ws, we, _cls in hits]
+
+        def apply_worker(run_id: int, ranges: list[tuple[int, int]], done) -> None:
+            self._typography_hits = ranges
+
+            def wrapped_done() -> None:
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._typography_hit_fracs = fracs
+                    if ranges:
+                        done(f"Typography - {len(ranges)} hit(s)")
+                    else:
+                        done("Typography - no issues found")
+
+                self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs)
+
+            self._apply_tag_ranges_progressive(run_id, "Typography", ranges, "typography_hit", wrapped_done)
+
+        self._typography_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Typography",
+            active_check=lambda: self._typography_active,
+            clear_before=self._clear_typography_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Typography Scan Error",
+        )
 
     def _clear_echo_highlights(self) -> None:
         self.text.tag_remove("echo_hit", "1.0", tk.END)

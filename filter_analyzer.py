@@ -607,6 +607,42 @@ def build_console_report(
     return lines
 
 
+def analyze_typography(
+    text: str,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, str]]:
+    """Return typography hits (straight quotes, multiple dashes, loose ellipses) as (start, end, class) tuples."""
+    if not text.strip():
+        if progress_callback is not None:
+            progress_callback(100)
+        return []
+
+    hits: list[tuple[int, int, str]] = []
+
+    # Straight quotes
+    for match in re.finditer(r'[\'"]', text):
+        hits.append((match.start(), match.end(), "typography"))
+
+    # Multiple dashes (e.g., --, ---)
+    for match in re.finditer(r'--+', text):
+        hits.append((match.start(), match.end(), "typography"))
+
+    # Dashes with spaces around them
+    for match in re.finditer(r'(?:^|\s+)[\u2014-](?:\s+|$)', text):
+        hits.append((match.start(), match.end(), "typography"))
+
+    # Loose ellipses (e.g., ..., .....)
+    for match in re.finditer(r'(?<!\.)\.\.\.(?!\.)|(?<!\.)\.{4,}', text):
+        hits.append((match.start(), match.end(), "typography"))
+
+    unique_hits = sorted(set(hits), key=lambda item: item[0])
+
+    if progress_callback is not None:
+        progress_callback(100)
+
+    return unique_hits
+
+
 def analyze_weak_modifiers(
     text: str,
     progress_callback: Callable[[int], None] | None = None,

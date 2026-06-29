@@ -494,6 +494,8 @@ class ModeSubsystem:
             self._mark_echo_needs_update()
         elif getattr(self, "_pacing_active", False):
             self._mark_pacing_needs_update()
+        elif getattr(self, "_typography_active", False):
+            self._mark_typography_needs_update()
 
     def _on_filter_refresh_clicked(self) -> None:
         if self._is_editor_processing():
@@ -526,6 +528,10 @@ class ModeSubsystem:
         if getattr(self, "_pacing_active", False):
             self._pacing_update_needed = False
             self._run_pacing_scan_mode()
+            return
+        if getattr(self, "_typography_active", False):
+            self._typography_update_needed = False
+            self._run_typography_scan_mode()
             return
 
     def _finish_filter_processing(self) -> None:

@@ -180,6 +180,9 @@ class IndicatorSubsystem:
             elif self.app._dialogue_tag_active:
                 source_fracs = self.app._dialogue_tag_hit_fracs
                 fill_color = self.colors["ORANGE_FG"]
+            elif getattr(self.app, "_typography_active", False):
+                source_fracs = getattr(self.app, "_typography_hit_fracs", [])
+                fill_color = self.colors["BLUE_FG"]
             else:
                 source_fracs = []
                 fill_color = self.colors["ACCENT"]

@@ -1642,8 +1642,6 @@ class EditorialApp:
         try:
             self.text.edit_separator()
 
-            # Process the whole thing safely since we preserve undo state
-
             first, last = self.text.yview()
             insert_idx = self.text.index(tk.INSERT)
 

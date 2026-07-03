@@ -330,6 +330,17 @@ class EditorialApp:
         vm.add_command(label="Zoom Out", command=self._zoom_out, accelerator="Ctrl+-")
         bar.add_cascade(label="View", menu=vm)
 
+        # Punctuation --------------------------------------------------------
+        pm = tk.Menu(bar, **cfg)
+        pm.add_command(label="Convert to Smart Quotes", command=self._convert_to_smart_quotes)
+        pm.add_command(label="Convert to Straight Quotes", command=self._convert_to_straight_quotes)
+        pm.add_separator()
+        pm.add_command(label="Convert Ellipses to Spaced", command=self._convert_ellipses_spaced)
+        pm.add_command(label="Convert Ellipses to Character", command=self._convert_ellipses_char)
+        pm.add_separator()
+        pm.add_command(label="Clean Whitespace", command=self._clean_whitespace)
+        bar.add_cascade(label="Punctuation", menu=pm)
+
         # Tools --------------------------------------------------------------
         tm = tk.Menu(bar, **cfg)
         tm.add_radiobutton(
@@ -411,7 +422,7 @@ class EditorialApp:
         hm.add_command(label="About Editorial", command=self.show_about_dialog)
         bar.add_cascade(label="Help", menu=hm)
 
-        self._menus: list[tk.Menu] = [fm, em, vm, tm, hm]
+        self._menus: list[tk.Menu] = [fm, em, vm, pm, tm, hm]
         self._tools_menu = tm
 
         self.root.config(menu=bar)
@@ -1636,6 +1647,69 @@ class EditorialApp:
         if smart != working:
             total_changes += 1
         return smart, total_changes
+
+    def _get_text_range(self) -> tuple[str, str, str]:
+        """Returns (start_index, end_index, selected_text) based on selection or whole document."""
+        try:
+            sel_start = self.text.index(tk.SEL_FIRST)
+            sel_end = self.text.index(tk.SEL_LAST)
+            return sel_start, sel_end, self.text.get(sel_start, sel_end)
+        except tk.TclError:
+            # No selection, use entire document
+            return "1.0", "end-1c", self.text.get("1.0", "end-1c")
+
+    def _replace_text_range(self, start: str, end: str, new_text: str) -> None:
+        """Replaces text in the given range and selects the new text if it was originally selected."""
+        try:
+            had_sel = bool(self.text.tag_ranges(tk.SEL))
+        except tk.TclError:
+            had_sel = False
+
+        self.text.delete(start, end)
+        self.text.insert(start, new_text)
+
+        if had_sel:
+            new_end = f"{start}+{len(new_text)}c"
+            self.text.tag_add(tk.SEL, start, new_end)
+
+        self._update_status()
+        self._mark_active_mode_needs_update()
+
+    def _convert_to_smart_quotes(self) -> None:
+        start, end, text = self._get_text_range()
+        new_text = self._smarten_straight_quotes(text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _convert_to_straight_quotes(self) -> None:
+        start, end, text = self._get_text_range()
+        new_text = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _convert_ellipses_spaced(self) -> None:
+        start, end, text = self._get_text_range()
+        # Find ... or .... or more, … and . . .
+        # The goal is to replace with . . .
+        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '. . .', text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _convert_ellipses_char(self) -> None:
+        start, end, text = self._get_text_range()
+        # Find ... or .... or more, . . . and replace with …
+        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '\u2026', text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _clean_whitespace(self) -> None:
+        start, end, text = self._get_text_range()
+        # Remove trailing spaces
+        new_text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
+        # Collapse multiple spaces into one, including at the beginning of lines
+        new_text = re.sub(r'[ \t]{2,}', ' ', new_text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
 
     def _smarten_straight_quotes(self, text: str) -> str:
         # First normalize smart quotes to straight quotes so conversion is deterministic.

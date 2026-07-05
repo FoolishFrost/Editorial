@@ -38,7 +38,10 @@ ADVERB_EXCLUDE: set[str] = {
     "lovely", "only", "silly", "tally", "valley",
 }
 
-CLICHES_LIST = [
+import os
+import sys
+
+_DEFAULT_CLICHES = [
     "avoid like the plague", "fit as a fiddle", "at the end of the day",
     "piece of cake", "barking up the wrong tree", "bite the bullet",
     "break the ice", "call it a day", "cut corners", "get out of hand",
@@ -55,7 +58,7 @@ CLICHES_LIST = [
     "the early bird catches the worm", "the writing on the wall", "throw caution to the wind"
 ]
 
-REDUNDANCIES_LIST = [
+_DEFAULT_REDUNDANCIES = [
     "shrugged his shoulders", "nodded her head", "whispered softly", "sudden crisis",
     "past history", "added bonus", "advance warning", "basic fundamentals",
     "close proximity", "completely finish", "consensus of opinion", "end result",
@@ -68,13 +71,51 @@ REDUNDANCIES_LIST = [
     "shook his head", "shook her head"
 ]
 
+def _get_base_dir() -> str:
+    """Get the base directory for loading/saving data files."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def load_or_create_list(filename: str, default_items: list[str]) -> list[str]:
+    """Load items from a file, creating it with defaults if it doesn't exist."""
+    path = os.path.join(_get_base_dir(), filename)
+    try:
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as fh:
+                for item in default_items:
+                    fh.write(f"{item}\n")
+            return list(default_items)
+
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = [line.strip() for line in fh.readlines()]
+            return [line for line in lines if line and not line.startswith("#")]
+    except Exception:
+        # Fallback to defaults if file operations fail
+        return list(default_items)
+
+CLICHES_LIST = load_or_create_list("cliches.txt", _DEFAULT_CLICHES)
+REDUNDANCIES_LIST = load_or_create_list("redundancies.txt", _DEFAULT_REDUNDANCIES)
+
 
 # Match quote characters used for dialogue boundaries.
 _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
 _FILTER_SET = set(FILTER_LEMMAS)
 _IGNORE_PHRASE_REGEXES = [re.compile(re.escape(phrase)) for phrase in IGNORE_PHRASES]
+
 _CLICHES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in CLICHES_LIST]
 _REDUNDANCIES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in REDUNDANCIES_LIST]
+
+def reload_cliches() -> None:
+    global CLICHES_LIST, _CLICHES_REGEXES
+    CLICHES_LIST = load_or_create_list("cliches.txt", _DEFAULT_CLICHES)
+    _CLICHES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in CLICHES_LIST]
+
+def reload_redundancies() -> None:
+    global REDUNDANCIES_LIST, _REDUNDANCIES_REGEXES
+    REDUNDANCIES_LIST = load_or_create_list("redundancies.txt", _DEFAULT_REDUNDANCIES)
+    _REDUNDANCIES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in REDUNDANCIES_LIST]
+
 
 _WORD_RE = re.compile(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?")
 _DASH_RE = re.compile(r"--|\s—|—\s|\s-\s")

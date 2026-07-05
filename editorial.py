@@ -125,6 +125,9 @@ EDITOR_MODE_DTAG = "dialogue_tags"
 EDITOR_MODE_EMOTION = "emotion_catcher"
 EDITOR_MODE_ECHO = "echo_radar"
 EDITOR_MODE_PACING = "rhythm_pacing"
+EDITOR_MODE_CLICHE = "cliches"
+EDITOR_MODE_REDUNDANCY = "redundancies"
+EDITOR_MODE_PASSIVE = "passive_voice"
 
 EDITOR_MODES: list[tuple[str, str]] = [
     ("Editor Off", EDITOR_MODE_OFF),
@@ -135,6 +138,9 @@ EDITOR_MODES: list[tuple[str, str]] = [
     ("Emotion Catcher", EDITOR_MODE_EMOTION),
     ("Proximity Echo Radar", EDITOR_MODE_ECHO),
     ("Rhythm & Pacing", EDITOR_MODE_PACING),
+    ("Cliches", EDITOR_MODE_CLICHE),
+    ("Redundancies", EDITOR_MODE_REDUNDANCY),
+    ("Passive Voice", EDITOR_MODE_PASSIVE),
 ]
 
 
@@ -330,6 +336,17 @@ class EditorialApp:
         vm.add_command(label="Zoom Out", command=self._zoom_out, accelerator="Ctrl+-")
         bar.add_cascade(label="View", menu=vm)
 
+        # Punctuation --------------------------------------------------------
+        pm = tk.Menu(bar, **cfg)
+        pm.add_command(label="Convert to Smart Quotes", command=self._convert_to_smart_quotes)
+        pm.add_command(label="Convert to Straight Quotes", command=self._convert_to_straight_quotes)
+        pm.add_separator()
+        pm.add_command(label="Convert Ellipses to Spaced", command=self._convert_ellipses_spaced)
+        pm.add_command(label="Convert Ellipses to Character", command=self._convert_ellipses_char)
+        pm.add_separator()
+        pm.add_command(label="Clean Whitespace", command=self._clean_whitespace)
+        bar.add_cascade(label="Punctuation", menu=pm)
+
         # Tools --------------------------------------------------------------
         tm = tk.Menu(bar, **cfg)
         tm.add_radiobutton(
@@ -395,6 +412,27 @@ class EditorialApp:
             accelerator="Ctrl+Shift+M",
         )
         self._tools_mode_entries.append((int(tm.index("end")), "Rhythm & Pacing", EDITOR_MODE_PACING))
+        tm.add_radiobutton(
+            label="Cliches",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_CLICHE,
+            command=self._on_tools_mode_selected,
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Cliches", EDITOR_MODE_CLICHE))
+        tm.add_radiobutton(
+            label="Redundancies",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_REDUNDANCY,
+            command=self._on_tools_mode_selected,
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Redundancies", EDITOR_MODE_REDUNDANCY))
+        tm.add_radiobutton(
+            label="Passive Voice",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_PASSIVE,
+            command=self._on_tools_mode_selected,
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Passive Voice", EDITOR_MODE_PASSIVE))
         tm.add_separator()
         tm.add_command(label="Refresh", command=self._on_filter_refresh_clicked)
         self._tools_refresh_index = int(tm.index("end"))
@@ -411,7 +449,7 @@ class EditorialApp:
         hm.add_command(label="About Editorial", command=self.show_about_dialog)
         bar.add_cascade(label="Help", menu=hm)
 
-        self._menus: list[tk.Menu] = [fm, em, vm, tm, hm]
+        self._menus: list[tk.Menu] = [fm, em, vm, pm, tm, hm]
         self._tools_menu = tm
 
         self.root.config(menu=bar)
@@ -735,6 +773,21 @@ class EditorialApp:
             underline=1,
         )
         self.text.tag_configure(
+            "cliche_hit",
+            background="#004d40", # Dark cyan/teal bg
+            foreground="#80cbc4", # Cyan/teal fg
+        )
+        self.text.tag_configure(
+            "redundancy_hit",
+            background="#4d4d00", # Dark yellow bg
+            foreground="#ffee58", # Yellow fg
+        )
+        self.text.tag_configure(
+            "passive_voice_hit",
+            background="#4a0024", # Dark magenta/pink bg
+            foreground="#f06292", # Magenta/pink fg
+        )
+        self.text.tag_configure(
             "echo_hit",
             background="#3b4f6f",
             foreground="#eef6ff",
@@ -1003,6 +1056,9 @@ class EditorialApp:
             or self._dialogue_tag_active
             or self._emotion_active
             or self._echo_active
+            or getattr(self, "_cliche_active", False)
+            or getattr(self, "_redundancy_active", False)
+            or getattr(self, "_passive_voice_active", False)
         )
 
     def _mode_uses_quote_band(self) -> bool:
@@ -1069,6 +1125,9 @@ class EditorialApp:
         self._emotion_update_needed = False
         self._echo_update_needed = False
         self._pacing_update_needed = False
+        self._cliche_update_needed = False
+        self._redundancy_update_needed = False
+        self._passive_voice_update_needed = False
         self._hide_filter_refresh_button()
 
         self.filter_active = False
@@ -1078,6 +1137,9 @@ class EditorialApp:
         self._emotion_active = False
         self._echo_active = False
         self._pacing_active = False
+        self._cliche_active = False
+        self._redundancy_active = False
+        self._passive_voice_active = False
 
         self._clear_filter()
         self._clear_weak_modifiers()
@@ -1086,6 +1148,9 @@ class EditorialApp:
         self._clear_emotion_highlights()
         self._clear_echo_highlights()
         self._clear_pacing_highlights()
+        self._clear_cliche_highlights()
+        self._clear_redundancy_highlights()
+        self._clear_passive_voice_highlights()
         self._hide_quote_band()
         self._hide_density_band()
 
@@ -1133,6 +1198,24 @@ class EditorialApp:
         if mode == EDITOR_MODE_PACING:
             self._pacing_active = True
             self._run_pacing_scan_mode()
+            return
+
+        if mode == EDITOR_MODE_CLICHE:
+            self._show_density_band()
+            self._cliche_active = True
+            self._run_cliche_mode()
+            return
+
+        if mode == EDITOR_MODE_REDUNDANCY:
+            self._show_density_band()
+            self._redundancy_active = True
+            self._run_redundancy_mode()
+            return
+
+        if mode == EDITOR_MODE_PASSIVE:
+            self._show_density_band()
+            self._passive_voice_active = True
+            self._run_passive_voice_mode()
             return
 
     def save_file(self) -> None:
@@ -1197,6 +1280,12 @@ class EditorialApp:
                 label_map = {"echo": "ECHO"}
             elif mode == EDITOR_MODE_PACING:
                 label_map = dict(PACING_EXPORT_LABELS)
+            elif mode == EDITOR_MODE_CLICHE:
+                label_map = {"cliche_hit": "CLICHE"}
+            elif mode == EDITOR_MODE_REDUNDANCY:
+                label_map = {"redundancy_hit": "REDUNDANCY"}
+            elif mode == EDITOR_MODE_PASSIVE:
+                label_map = {"passive_voice_hit": "PASSIVE_VOICE"}
             tagged = self._build_tagged_export(text, ranges, label_map)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
@@ -1406,6 +1495,30 @@ class EditorialApp:
             ):
                 ranges.append((ws, we, self._pacing_tag_from_heat(heat)))
             return sorted(ranges, key=lambda x: x[0])
+        if mode == EDITOR_MODE_CLICHE:
+            if not getattr(self, "_cliche_update_needed", False) and getattr(self, "_cliche_hits", None):
+                return sorted([(ws, we, "cliche_hit") for ws, we in self._cliche_hits], key=lambda x: x[0])
+            from filter_analyzer import analyze_cliches
+            return sorted(
+                [(ws, we, "cliche_hit") for ws, we, _cls in analyze_cliches(text)],
+                key=lambda x: x[0],
+            )
+        if mode == EDITOR_MODE_REDUNDANCY:
+            if not getattr(self, "_redundancy_update_needed", False) and getattr(self, "_redundancy_hits", None):
+                return sorted([(ws, we, "redundancy_hit") for ws, we in self._redundancy_hits], key=lambda x: x[0])
+            from filter_analyzer import analyze_redundancies
+            return sorted(
+                [(ws, we, "redundancy_hit") for ws, we, _cls in analyze_redundancies(text)],
+                key=lambda x: x[0],
+            )
+        if mode == EDITOR_MODE_PASSIVE:
+            if not getattr(self, "_passive_voice_update_needed", False) and getattr(self, "_passive_voice_hits", None):
+                return sorted([(ws, we, "passive_voice_hit") for ws, we in self._passive_voice_hits], key=lambda x: x[0])
+            from filter_analyzer import analyze_passive_voice
+            return sorted(
+                [(ws, we, "passive_voice_hit") for ws, we, _cls in analyze_passive_voice(text)],
+                key=lambda x: x[0],
+            )
         if mode == EDITOR_MODE_WEAK:
             if not self._weak_update_needed and self._weak_mod_hits:
                 return sorted(
@@ -1518,6 +1631,9 @@ class EditorialApp:
             "pacing_warm_1": (3, 4),
             "pacing_warm_2": (3, 4),
             "pacing_hot": (1, 2),
+            "cliche_hit": (13, 14),       # #80cbc4 on #004d40
+            "redundancy_hit": (15, 16),   # #ffee58 on #4d4d00
+            "passive_voice_hit": (17, 18),# #f06292 on #4a0024
         }
 
         chunks: list[str] = []
@@ -1552,6 +1668,12 @@ class EditorialApp:
             r"\red58\green58\blue58;"      # 10 WHITE_BG #3a3a3a
             r"\red166\green227\blue161;"   # 11 GREEN_FG #a6e3a1
             r"\red26\green46\blue30;"      # 12 GREEN_BG #1a2e1e
+            r"\red128\green203\blue196;"   # 13 Cliche FG #80cbc4
+            r"\red0\green77\blue64;"       # 14 Cliche BG #004d40
+            r"\red255\green238\blue88;"    # 15 Redundancy FG #ffee58
+            r"\red77\green77\blue0;"       # 16 Redundancy BG #4d4d00
+            r"\red240\green98\blue146;"    # 17 Passive FG #f06292
+            r"\red74\green0\blue36;"       # 18 Passive BG #4a0024
             r"}"
         )
         header = (
@@ -1637,6 +1759,69 @@ class EditorialApp:
             total_changes += 1
         return smart, total_changes
 
+    def _get_text_range(self) -> tuple[str, str, str]:
+        """Returns (start_index, end_index, selected_text) based on selection or whole document."""
+        try:
+            sel_start = self.text.index(tk.SEL_FIRST)
+            sel_end = self.text.index(tk.SEL_LAST)
+            return sel_start, sel_end, self.text.get(sel_start, sel_end)
+        except tk.TclError:
+            # No selection, use entire document
+            return "1.0", "end-1c", self.text.get("1.0", "end-1c")
+
+    def _replace_text_range(self, start: str, end: str, new_text: str) -> None:
+        """Replaces text in the given range and selects the new text if it was originally selected."""
+        try:
+            had_sel = bool(self.text.tag_ranges(tk.SEL))
+        except tk.TclError:
+            had_sel = False
+
+        self.text.delete(start, end)
+        self.text.insert(start, new_text)
+
+        if had_sel:
+            new_end = f"{start}+{len(new_text)}c"
+            self.text.tag_add(tk.SEL, start, new_end)
+
+        self._update_status()
+        self._mark_active_mode_needs_update()
+
+    def _convert_to_smart_quotes(self) -> None:
+        start, end, text = self._get_text_range()
+        new_text = self._smarten_straight_quotes(text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _convert_to_straight_quotes(self) -> None:
+        start, end, text = self._get_text_range()
+        new_text = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _convert_ellipses_spaced(self) -> None:
+        start, end, text = self._get_text_range()
+        # Find ... or .... or more, … and . . .
+        # The goal is to replace with . . .
+        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '. . .', text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _convert_ellipses_char(self) -> None:
+        start, end, text = self._get_text_range()
+        # Find ... or .... or more, . . . and replace with …
+        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '\u2026', text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
+    def _clean_whitespace(self) -> None:
+        start, end, text = self._get_text_range()
+        # Remove trailing spaces
+        new_text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
+        # Collapse multiple spaces into one, including at the beginning of lines
+        new_text = re.sub(r'[ \t]{2,}', ' ', new_text)
+        if new_text != text:
+            self._replace_text_range(start, end, new_text)
+
     def _smarten_straight_quotes(self, text: str) -> str:
         # First normalize smart quotes to straight quotes so conversion is deterministic.
         src = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
@@ -1677,6 +1862,21 @@ class EditorialApp:
         self.text.tag_remove("emotion_hit", "1.0", tk.END)
         self._emotion_hits = []
         self._emotion_hit_fracs = []
+
+    def _clear_cliche_highlights(self) -> None:
+        self.text.tag_remove("cliche_hit", "1.0", tk.END)
+        self._cliche_hits = []
+        self._cliche_hit_fracs = []
+
+    def _clear_redundancy_highlights(self) -> None:
+        self.text.tag_remove("redundancy_hit", "1.0", tk.END)
+        self._redundancy_hits = []
+        self._redundancy_hit_fracs = []
+
+    def _clear_passive_voice_highlights(self) -> None:
+        self.text.tag_remove("passive_voice_hit", "1.0", tk.END)
+        self._passive_voice_hits = []
+        self._passive_voice_hit_fracs = []
 
     def _clear_typography_highlights(self) -> None:
         self.text.tag_remove("typography_hit", "1.0", tk.END)
@@ -1992,6 +2192,132 @@ class EditorialApp:
 
     def _mark_typography_needs_update(self) -> None:
         return
+
+    def _run_cliche_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            from filter_analyzer import analyze_cliches
+            hits = analyze_cliches(content, progress_callback=progress_cb)
+            raw_ranges = [(ws, we) for ws, we, _cls in hits]
+            return self._normalize_ranges(content, raw_ranges)
+
+        def apply_worker(run_id: int, ranges: list[tuple[int, int]], done) -> None:
+            self._cliche_hits = ranges
+
+            def wrapped_done() -> None:
+                if ranges and not self.text.tag_ranges("cliche_hit"):
+                    for ws, we in ranges:
+                        if we > ws:
+                            self.text.tag_add("cliche_hit", f"1.0 + {ws}c", f"1.0 + {we}c")
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._cliche_hit_fracs = fracs
+                    if ranges:
+                        done(f"Cliches - {len(ranges)} hit(s)")
+                    else:
+                        done("Cliches - no cliches found")
+
+                self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs)
+
+            self._apply_tag_ranges_progressive(run_id, "Cliches", ranges, "cliche_hit", wrapped_done)
+
+        self._cliche_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Cliches",
+            active_check=lambda: getattr(self, "_cliche_active", False),
+            clear_before=self._clear_cliche_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Cliches Error",
+        )
+
+    def _run_redundancy_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            from filter_analyzer import analyze_redundancies
+            hits = analyze_redundancies(content, progress_callback=progress_cb)
+            raw_ranges = [(ws, we) for ws, we, _cls in hits]
+            return self._normalize_ranges(content, raw_ranges)
+
+        def apply_worker(run_id: int, ranges: list[tuple[int, int]], done) -> None:
+            self._redundancy_hits = ranges
+
+            def wrapped_done() -> None:
+                if ranges and not self.text.tag_ranges("redundancy_hit"):
+                    for ws, we in ranges:
+                        if we > ws:
+                            self.text.tag_add("redundancy_hit", f"1.0 + {ws}c", f"1.0 + {we}c")
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._redundancy_hit_fracs = fracs
+                    if ranges:
+                        done(f"Redundancies - {len(ranges)} hit(s)")
+                    else:
+                        done("Redundancies - no redundancies found")
+
+                self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs)
+
+            self._apply_tag_ranges_progressive(run_id, "Redundancies", ranges, "redundancy_hit", wrapped_done)
+
+        self._redundancy_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Redundancies",
+            active_check=lambda: getattr(self, "_redundancy_active", False),
+            clear_before=self._clear_redundancy_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Redundancies Error",
+        )
+
+    def _run_passive_voice_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            from filter_analyzer import analyze_passive_voice
+            hits = analyze_passive_voice(content, progress_callback=progress_cb)
+            raw_ranges = [(ws, we) for ws, we, _cls in hits]
+            return self._normalize_ranges(content, raw_ranges)
+
+        def apply_worker(run_id: int, ranges: list[tuple[int, int]], done) -> None:
+            self._passive_voice_hits = ranges
+
+            def wrapped_done() -> None:
+                if ranges and not self.text.tag_ranges("passive_voice_hit"):
+                    for ws, we in ranges:
+                        if we > ws:
+                            self.text.tag_add("passive_voice_hit", f"1.0 + {ws}c", f"1.0 + {we}c")
+                def finish_fracs(fracs: list[float]) -> None:
+                    if run_id != self._mode_wrapper_run_seq:
+                        return
+                    self._passive_voice_hit_fracs = fracs
+                    if ranges:
+                        done(f"Passive Voice - {len(ranges)} hit(s)")
+                    else:
+                        done("Passive Voice - no passive voice found")
+
+                self._build_displayline_midpoint_fracs_async(run_id, ranges, finish_fracs)
+
+            self._apply_tag_ranges_progressive(run_id, "Passive Voice", ranges, "passive_voice_hit", wrapped_done)
+
+        self._passive_voice_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Passive Voice",
+            active_check=lambda: getattr(self, "_passive_voice_active", False),
+            clear_before=self._clear_passive_voice_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Passive Voice Error",
+        )
 
     def _run_emotion_catcher_mode(self) -> None:
         def analyze_worker(content: str, progress_cb):
@@ -3063,6 +3389,9 @@ class EditorialApp:
                 (GREEN_FG, f"Balanced (~{PACING_AVERAGE_WORDS})"),
                 (RED_FG, f"Long (>= {PACING_LONG_WORDS})"),
             ],
+            EDITOR_MODE_CLICHE: [("#80cbc4", "Cliche")],
+            EDITOR_MODE_REDUNDANCY: [("#ffee58", "Redundancy")],
+            EDITOR_MODE_PASSIVE: [("#f06292", "Passive Voice")],
         }
 
         items = legend_map.get(self._active_editor_mode, [])

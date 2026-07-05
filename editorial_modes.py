@@ -42,6 +42,9 @@ class ModeSubsystem:
         "_mark_weak_needs_update",
         "_mark_punct_needs_update",
         "_mark_active_mode_needs_update",
+        "_mark_cliche_needs_update",
+        "_mark_redundancy_needs_update",
+        "_mark_passive_voice_needs_update",
         "_on_filter_refresh_clicked",
         "_finish_filter_processing",
         "_finalize_filter_processing",
@@ -479,6 +482,27 @@ class ModeSubsystem:
         self._show_filter_refresh_button()
         self._lbl_filter.config(text="Punctuation - changes pending (click Refresh)")
 
+    def _mark_cliche_needs_update(self) -> None:
+        if not getattr(self, "_cliche_active", False):
+            return
+        self._cliche_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Cliches - changes pending (click Refresh)")
+
+    def _mark_redundancy_needs_update(self) -> None:
+        if not getattr(self, "_redundancy_active", False):
+            return
+        self._redundancy_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Redundancies - changes pending (click Refresh)")
+
+    def _mark_passive_voice_needs_update(self) -> None:
+        if not getattr(self, "_passive_voice_active", False):
+            return
+        self._passive_voice_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Passive Voice - changes pending (click Refresh)")
+
     def _mark_active_mode_needs_update(self) -> None:
         if self.filter_active:
             self._mark_filter_needs_update()
@@ -494,6 +518,12 @@ class ModeSubsystem:
             self._mark_echo_needs_update()
         elif getattr(self, "_pacing_active", False):
             self._mark_pacing_needs_update()
+        elif getattr(self, "_cliche_active", False):
+            self._mark_cliche_needs_update()
+        elif getattr(self, "_redundancy_active", False):
+            self._mark_redundancy_needs_update()
+        elif getattr(self, "_passive_voice_active", False):
+            self._mark_passive_voice_needs_update()
 
     def _on_filter_refresh_clicked(self) -> None:
         if self._is_editor_processing():
@@ -526,6 +556,18 @@ class ModeSubsystem:
         if getattr(self, "_pacing_active", False):
             self._pacing_update_needed = False
             self._run_pacing_scan_mode()
+            return
+        if getattr(self, "_cliche_active", False):
+            self._cliche_update_needed = False
+            self._run_cliche_mode()
+            return
+        if getattr(self, "_redundancy_active", False):
+            self._redundancy_update_needed = False
+            self._run_redundancy_mode()
+            return
+        if getattr(self, "_passive_voice_active", False):
+            self._passive_voice_update_needed = False
+            self._run_passive_voice_mode()
             return
 
     def _finish_filter_processing(self) -> None:

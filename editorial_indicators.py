@@ -180,6 +180,15 @@ class IndicatorSubsystem:
             elif self.app._dialogue_tag_active:
                 source_fracs = self.app._dialogue_tag_hit_fracs
                 fill_color = self.colors["ORANGE_FG"]
+            elif getattr(self.app, "_cliche_active", False):
+                source_fracs = getattr(self.app, "_cliche_hit_fracs", [])
+                fill_color = "#80cbc4" # Cliche color
+            elif getattr(self.app, "_redundancy_active", False):
+                source_fracs = getattr(self.app, "_redundancy_hit_fracs", [])
+                fill_color = "#ffee58" # Redundancy color
+            elif getattr(self.app, "_passive_voice_active", False):
+                source_fracs = getattr(self.app, "_passive_voice_hit_fracs", [])
+                fill_color = "#f06292" # Passive voice color
             else:
                 source_fracs = []
                 fill_color = self.colors["ACCENT"]

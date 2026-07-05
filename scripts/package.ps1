@@ -13,7 +13,7 @@ if (-not (Test-Path $venvActivate)) {
 }
 
 & $venvActivate
-pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm editorial.py
+pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm --collect-all spellchecker editorial.py
 
 Write-Host "[2/4] Creating portable ZIP package..."
 $distExe = Join-Path $repo "dist\Editorial.exe"

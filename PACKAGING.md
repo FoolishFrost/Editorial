@@ -29,7 +29,7 @@ Build EXE only:
 
 powershell
 & .\.venv\Scripts\Activate.ps1
-pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm editorial.py
+pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm --collect-all spellchecker editorial.py
 
 Build installer manually:
 

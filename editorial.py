@@ -27,6 +27,7 @@ import bisect
 import ctypes
 import subprocess
 import webbrowser
+from spellchecker import SpellChecker
 from collections import Counter
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -258,6 +259,10 @@ class EditorialApp:
         self._settings_path = self._get_settings_path()
         self._load_user_settings()
         self._modes = ModeSubsystem(self)
+
+        self._spellcheck_active: bool = True
+        self._spellcheck_run_seq: int = 0
+        self._spellcheck_job: str | None = None
         for method_name in ModeSubsystem.EXPORTED_METHODS:
             setattr(self, method_name, getattr(self._modes, method_name))
         self._indicators = IndicatorSubsystem(
@@ -453,6 +458,31 @@ class EditorialApp:
         self._tools_menu = tm
 
         self.root.config(menu=bar)
+
+        self._spellchecker = SpellChecker()
+        self._ignored_words: set[str] = set()
+        self._custom_dict_path = os.path.join(os.path.dirname(self._settings_path), "custom_dictionary.json")
+        self._custom_dict_words: set[str] = set()
+        self._load_custom_dictionary()
+
+    def _load_custom_dictionary(self) -> None:
+        try:
+            if os.path.exists(self._custom_dict_path):
+                with open(self._custom_dict_path, "r", encoding="utf-8") as fh:
+                    words = json.load(fh)
+                    if isinstance(words, list):
+                        self._custom_dict_words = set(words)
+                        self._spellchecker.word_frequency.load_words(words)
+        except Exception:
+            pass
+
+    def _save_custom_dictionary(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._custom_dict_path), exist_ok=True)
+            with open(self._custom_dict_path, "w", encoding="utf-8") as fh:
+                json.dump(list(self._custom_dict_words), fh)
+        except Exception:
+            pass
 
     # --------------------------------------------------------------- toolbar
 
@@ -806,6 +836,11 @@ class EditorialApp:
             underline=1,
         )
         self.text.tag_configure(
+            "misspelled",
+            underline=1,
+            foreground=RED_FG,
+        )
+        self.text.tag_configure(
             "dialogue_tag",
             background=ORANGE_BG,
             foreground=ORANGE_FG,
@@ -840,8 +875,183 @@ class EditorialApp:
         self.text.bind("<<Copy>>", self._on_copy_event)
         self.text.bind("<Control-MouseWheel>", self._on_ctrl_mousewheel)
 
+        # Context menu bindings
+        if self.root.tk.call("tk", "windowingsystem") == "aqua":
+            self.text.bind("<Button-2>", self._show_context_menu)
+            self.text.bind("<Control-Button-1>", self._show_context_menu)
+        else:
+            self.text.bind("<Button-3>", self._show_context_menu)
+
         # Defer first line-number draw until widget is fully rendered
         self.root.after(120, self._redraw_lineno)
+
+        # Initial spellcheck
+        self._schedule_spellcheck()
+
+    def _schedule_spellcheck(self) -> None:
+        if not self._spellcheck_active:
+            return
+        if self._spellcheck_job is not None:
+            self.root.after_cancel(self._spellcheck_job)
+        self._spellcheck_job = self.root.after(1000, self._run_spellchecker)
+
+    def _run_spellchecker(self) -> None:
+        self._spellcheck_job = None
+        if not self._spellcheck_active:
+            return
+
+        self._spellcheck_run_seq += 1
+        run_id = self._spellcheck_run_seq
+        content = self.text.get("1.0", "end-1c")
+
+        def analyze_worker() -> None:
+            if not content.strip():
+                self.root.after(0, lambda: apply_worker([]))
+                return
+
+            token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+            misspelled = []
+
+            # Simple spellcheck scan
+            # We process words, keep original casing for checking? pyspellchecker works best with lower.
+            # actually we can extract all words and feed them to `spellchecker.unknown`
+            words = []
+            spans = []
+            for m in token_re.finditer(content):
+                word = m.group(0)
+                # Ignore uppercase words if they might be names? We'll let spellchecker handle it.
+                # pyspellchecker ignores numbers automatically if properly split
+                words.append(word)
+                spans.append(m.span())
+
+            # Find unknown words
+            unknown = self._spellchecker.unknown(words)
+            # Remove ignored words (accounting for case)
+            unknown = {w for w in unknown if w.lower() not in self._ignored_words}
+
+            # Map back to spans
+            for i, word in enumerate(words):
+                if word in unknown:
+                    misspelled.append(spans[i])
+
+            self.root.after(0, lambda: apply_worker(misspelled))
+
+        def apply_worker(ranges: list[tuple[int, int]]) -> None:
+            if run_id != self._spellcheck_run_seq:
+                return
+
+            self.text.tag_remove("misspelled", "1.0", tk.END)
+
+            if not ranges:
+                return
+
+            # Apply tags in chunks
+            total = len(ranges)
+            idx = 0
+            step = 600
+
+            def run_chunk() -> None:
+                nonlocal idx
+                if run_id != self._spellcheck_run_seq:
+                    return
+                end = min(total, idx + step)
+                flat_args = []
+                for ws, we in ranges[idx:end]:
+                    if we > ws:
+                        flat_args.append(f"1.0 + {ws}c")
+                        flat_args.append(f"1.0 + {we}c")
+                if flat_args:
+                    self.text.tk.call(self.text._w, "tag", "add", "misspelled", *flat_args)
+                idx = end
+                if idx < total:
+                    self.root.after(1, run_chunk)
+
+            run_chunk()
+
+        threading.Thread(target=analyze_worker, daemon=True).start()
+
+    def _show_context_menu(self, event) -> None:
+        try:
+            index = self.text.index(f"@{event.x},{event.y}")
+            tags = self.text.tag_names(index)
+        except tk.TclError:
+            return
+
+        if "misspelled" not in tags:
+            return
+
+        # Get the word span
+        # Use tag ranges to accurately capture the word including apostrophes
+        prev_range = self.text.tag_prevrange("misspelled", f"{index} wordend")
+        if not prev_range:
+            return
+
+        word_start, word_end = prev_range
+        # Double check the click is within the tag bounds
+        if self.text.compare(index, "<", word_start) or self.text.compare(index, ">=", word_end):
+            return
+
+        word = self.text.get(word_start, word_end)
+
+        # If it's empty or doesn't match our regex, maybe it's punctuation.
+        if not re.match(r"^[A-Za-z]+(?:'[A-Za-z]+)?$", word):
+            return
+
+        menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
+
+        # Get suggestions
+        suggestions = self._spellchecker.candidates(word)
+        if suggestions:
+            # pyspellchecker returns None if no suggestions, or a set
+            # To get better suggestions we could sort by frequency, but the candidates list is generally small.
+            # We'll just show the first 5 of a sorted list.
+            for i, suggestion in enumerate(sorted(list(suggestions))[:5]):
+                # Match capitalization
+                if word.istitle():
+                    suggestion = suggestion.title()
+                elif word.isupper():
+                    suggestion = suggestion.upper()
+
+                menu.add_command(
+                    label=suggestion,
+                    command=lambda s=suggestion: self._apply_suggestion(word_start, word_end, s)
+                )
+            menu.add_separator()
+        else:
+            menu.add_command(label="(No spelling suggestions)", state="disabled")
+            menu.add_separator()
+
+        menu.add_command(
+            label="Add to dictionary",
+            command=lambda w=word: self._add_to_dictionary(w)
+        )
+        menu.add_command(
+            label="Ignore",
+            command=lambda w=word: self._ignore_word(w)
+        )
+
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _add_to_dictionary(self, word: str) -> None:
+        word_lower = word.lower()
+        self._custom_dict_words.add(word_lower)
+        self._spellchecker.word_frequency.load_words([word_lower])
+        self._save_custom_dictionary()
+        self._run_spellchecker()
+
+    def _ignore_word(self, word: str) -> None:
+        self._ignored_words.add(word.lower())
+        self._run_spellchecker()
+
+    def _apply_suggestion(self, start: str, end: str, new_text: str) -> None:
+        try:
+            self.text.delete(start, end)
+            self.text.insert(start, new_text)
+            self._mark_active_mode_needs_update()
+            self._update_status()
+            self._schedule_spellcheck()
+        except tk.TclError:
+            pass
 
     def _show_analysis_panel(self) -> None:
         if self._analysis_visible:
@@ -3691,6 +3901,10 @@ class EditorialApp:
         self._update_status()
         self._apply_first_line_indent()
         self._redraw_lineno()
+
+        # Schedule spellchecker
+        self._schedule_spellcheck()
+
         if self._echo_active and not self._mode_wrapper_processing:
             self._schedule_echo_focus_refresh()
         if self._skip_filter_schedule_once:

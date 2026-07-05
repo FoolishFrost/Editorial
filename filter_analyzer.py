@@ -38,11 +38,44 @@ ADVERB_EXCLUDE: set[str] = {
     "lovely", "only", "silly", "tally", "valley",
 }
 
+CLICHES_LIST = [
+    "avoid like the plague", "fit as a fiddle", "at the end of the day",
+    "piece of cake", "barking up the wrong tree", "bite the bullet",
+    "break the ice", "call it a day", "cut corners", "get out of hand",
+    "hang in there", "hit the sack", "let the cat out of the bag",
+    "make a long story short", "miss the boat", "no pain, no gain",
+    "on the ball", "pull someone's leg", "so far so good",
+    "speak of the devil", "that's the last straw", "the best of both worlds",
+    "time flies", "under the weather", "wrap my head around", "elephant in the room",
+    "better late than never", "add insult to injury", "bite off more than you can chew",
+    "burning the midnight oil", "cost an arm and a leg", "cutting edge", "dime a dozen",
+    "don't judge a book by its cover", "every cloud has a silver lining", "ignorance is bliss",
+    "it takes two to tango", "jump on the bandwagon", "leave no stone unturned",
+    "once in a blue moon", "play devil's advocate", "spill the beans", "take with a grain of salt",
+    "the early bird catches the worm", "the writing on the wall", "throw caution to the wind"
+]
+
+REDUNDANCIES_LIST = [
+    "shrugged his shoulders", "nodded her head", "whispered softly", "sudden crisis",
+    "past history", "added bonus", "advance warning", "basic fundamentals",
+    "close proximity", "completely finish", "consensus of opinion", "end result",
+    "exactly identical", "fall down", "final outcome", "first and foremost",
+    "free gift", "future plans", "join together", "kneel down", "major breakthrough",
+    "new beginning", "new innovation", "past experience", "postpone until later",
+    "revert back", "safe haven", "shrugged her shoulders", "nodded his head",
+    "smile on his face", "smile on her face", "stand up", "sit down",
+    "totally unique", "true fact", "unexpected surprise", "unintended mistake",
+    "shook his head", "shook her head"
+]
+
 
 # Match quote characters used for dialogue boundaries.
 _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
 _FILTER_SET = set(FILTER_LEMMAS)
 _IGNORE_PHRASE_REGEXES = [re.compile(re.escape(phrase)) for phrase in IGNORE_PHRASES]
+_CLICHES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in CLICHES_LIST]
+_REDUNDANCIES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in REDUNDANCIES_LIST]
+
 _WORD_RE = re.compile(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?")
 _DASH_RE = re.compile(r"--|\s—|—\s|\s-\s")
 _ELLIPSIS_RE = re.compile(r"(?<!\.)\.{2}(?!\.)|(?<!\.)\.{4,}")
@@ -307,6 +340,119 @@ def analyze_filter_words(
         progress_callback(100)
 
     return hits
+
+
+def analyze_cliches(
+    text: str,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, str]]:
+    """Return cliche matches as (start, end, class) tuples."""
+    if not text.strip():
+        if progress_callback is not None:
+            progress_callback(100)
+        return []
+
+    hits: list[tuple[int, int, str]] = []
+
+    total_chars = max(1, len(text))
+    last_progress = -1
+
+    for i, regex in enumerate(_CLICHES_REGEXES):
+        for match in regex.finditer(text):
+            hits.append((match.start(), match.end(), "cliche_hit"))
+        if progress_callback is not None:
+            pct = max(1, min(100, int((i / len(_CLICHES_REGEXES)) * 100)))
+            if pct != last_progress:
+                progress_callback(pct)
+                last_progress = pct
+
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
+
+    return sorted(set(hits), key=lambda x: x[0])
+
+
+def analyze_redundancies(
+    text: str,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, str]]:
+    """Return redundancy matches as (start, end, class) tuples."""
+    if not text.strip():
+        if progress_callback is not None:
+            progress_callback(100)
+        return []
+
+    hits: list[tuple[int, int, str]] = []
+
+    total_chars = max(1, len(text))
+    last_progress = -1
+
+    for i, regex in enumerate(_REDUNDANCIES_REGEXES):
+        for match in regex.finditer(text):
+            hits.append((match.start(), match.end(), "redundancy_hit"))
+        if progress_callback is not None:
+            pct = max(1, min(100, int((i / len(_REDUNDANCIES_REGEXES)) * 100)))
+            if pct != last_progress:
+                progress_callback(pct)
+                last_progress = pct
+
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
+
+    return sorted(set(hits), key=lambda x: x[0])
+
+
+def analyze_passive_voice(
+    text: str,
+    progress_callback: Callable[[int], None] | None = None,
+) -> list[tuple[int, int, str]]:
+    """Return passive voice matches as (start, end, class) tuples."""
+    if not text.strip():
+        if progress_callback is not None:
+            progress_callback(100)
+        return []
+
+    nlp = _get_nlp()
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    masked = _mask_dialogue_spans(text, dialogue_spans)
+    doc = nlp(masked)
+
+    hits: list[tuple[int, int, str]] = []
+    span_idx = 0
+    total_chars = max(1, len(text))
+    last_progress = -1
+
+    for sent in doc.sents:
+        for token in sent:
+            tok_start = token.idx
+            tok_end = token.idx + len(token.text)
+
+            if progress_callback is not None:
+                pct = max(1, min(100, int((tok_end / total_chars) * 100)))
+                if pct != last_progress:
+                    progress_callback(pct)
+                    last_progress = pct
+
+            in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
+            if in_dialogue:
+                continue
+
+            # Check if token is part of a passive voice construction
+            # E.g., auxiliary "be" verb (am, is, are, was, were, be, being, been) + past participle verb
+            if token.dep_ == "auxpass" or (token.dep_ == "aux" and token.head.tag_ == "VBN" and token.lemma_ == "be"):
+                # Mark the auxiliary and the head verb
+                aux_start = token.idx
+                verb_end = token.head.idx + len(token.head.text)
+
+                # Make sure aux comes before verb
+                if aux_start < verb_end:
+                    hits.append((aux_start, verb_end, "passive_voice_hit"))
+
+    if progress_callback is not None and last_progress < 100:
+        progress_callback(100)
+
+    # Some overlapping spans might occur, take unique
+    return sorted(set(hits), key=lambda x: x[0])
 
 
 def analyze_emotion_words(

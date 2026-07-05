@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('data/*.txt', 'data')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('en_core_web_sm')

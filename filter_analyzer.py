@@ -38,43 +38,40 @@ ADVERB_EXCLUDE: set[str] = {
     "lovely", "only", "silly", "tally", "valley",
 }
 
-CLICHES_LIST = [
-    "avoid like the plague", "fit as a fiddle", "at the end of the day",
-    "piece of cake", "barking up the wrong tree", "bite the bullet",
-    "break the ice", "call it a day", "cut corners", "get out of hand",
-    "hang in there", "hit the sack", "let the cat out of the bag",
-    "make a long story short", "miss the boat", "no pain, no gain",
-    "on the ball", "pull someone's leg", "so far so good",
-    "speak of the devil", "that's the last straw", "the best of both worlds",
-    "time flies", "under the weather", "wrap my head around", "elephant in the room",
-    "better late than never", "add insult to injury", "bite off more than you can chew",
-    "burning the midnight oil", "cost an arm and a leg", "cutting edge", "dime a dozen",
-    "don't judge a book by its cover", "every cloud has a silver lining", "ignorance is bliss",
-    "it takes two to tango", "jump on the bandwagon", "leave no stone unturned",
-    "once in a blue moon", "play devil's advocate", "spill the beans", "take with a grain of salt",
-    "the early bird catches the worm", "the writing on the wall", "throw caution to the wind"
-]
+import os
 
-REDUNDANCIES_LIST = [
-    "shrugged his shoulders", "nodded her head", "whispered softly", "sudden crisis",
-    "past history", "added bonus", "advance warning", "basic fundamentals",
-    "close proximity", "completely finish", "consensus of opinion", "end result",
-    "exactly identical", "fall down", "final outcome", "first and foremost",
-    "free gift", "future plans", "join together", "kneel down", "major breakthrough",
-    "new beginning", "new innovation", "past experience", "postpone until later",
-    "revert back", "safe haven", "shrugged her shoulders", "nodded his head",
-    "smile on his face", "smile on her face", "stand up", "sit down",
-    "totally unique", "true fact", "unexpected surprise", "unintended mistake",
-    "shook his head", "shook her head"
-]
+def _load_phrase_file(filename: str) -> list[str]:
+    import sys
+    base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    filepath = os.path.join(base_dir, "data", filename)
+    phrases = []
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                phrase = line.strip()
+                if phrase and not phrase.startswith("#"):
+                    phrases.append(phrase)
+    except FileNotFoundError:
+        pass
+    return sorted(phrases, key=len, reverse=True)
+
+CLICHES_LIST = _load_phrase_file("cliches.txt")
+REDUNDANCIES_LIST = _load_phrase_file("redundancies.txt")
 
 
 # Match quote characters used for dialogue boundaries.
 _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
 _FILTER_SET = set(FILTER_LEMMAS)
 _IGNORE_PHRASE_REGEXES = [re.compile(re.escape(phrase)) for phrase in IGNORE_PHRASES]
-_CLICHES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in CLICHES_LIST]
-_REDUNDANCIES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in REDUNDANCIES_LIST]
+if CLICHES_LIST:
+    _CLICHES_REGEX = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in CLICHES_LIST) + r")\b", re.IGNORECASE)
+else:
+    _CLICHES_REGEX = None
+
+if REDUNDANCIES_LIST:
+    _REDUNDANCIES_REGEX = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in REDUNDANCIES_LIST) + r")\b", re.IGNORECASE)
+else:
+    _REDUNDANCIES_REGEX = None
 
 _WORD_RE = re.compile(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?")
 _DASH_RE = re.compile(r"--|\s—|—\s|\s-\s")
@@ -357,14 +354,15 @@ def analyze_cliches(
     total_chars = max(1, len(text))
     last_progress = -1
 
-    for i, regex in enumerate(_CLICHES_REGEXES):
-        for match in regex.finditer(text):
+    if _CLICHES_REGEX:
+        for match in _CLICHES_REGEX.finditer(text):
             hits.append((match.start(), match.end(), "cliche_hit"))
-        if progress_callback is not None:
-            pct = max(1, min(100, int((i / len(_CLICHES_REGEXES)) * 100)))
-            if pct != last_progress:
-                progress_callback(pct)
-                last_progress = pct
+
+            if progress_callback is not None:
+                pct = max(1, min(100, int((match.end() / total_chars) * 100)))
+                if pct != last_progress:
+                    progress_callback(pct)
+                    last_progress = pct
 
     if progress_callback is not None and last_progress < 100:
         progress_callback(100)
@@ -387,14 +385,54 @@ def analyze_redundancies(
     total_chars = max(1, len(text))
     last_progress = -1
 
-    for i, regex in enumerate(_REDUNDANCIES_REGEXES):
-        for match in regex.finditer(text):
+    if _REDUNDANCIES_REGEX:
+        for match in _REDUNDANCIES_REGEX.finditer(text):
             hits.append((match.start(), match.end(), "redundancy_hit"))
-        if progress_callback is not None:
-            pct = max(1, min(100, int((i / len(_REDUNDANCIES_REGEXES)) * 100)))
-            if pct != last_progress:
-                progress_callback(pct)
-                last_progress = pct
+
+            if progress_callback is not None:
+                pct = max(1, min(100, int((match.end() / total_chars) * 100)))
+                if pct != last_progress:
+                    progress_callback(pct)
+                    last_progress = pct
+
+    # Add spaCy check for grammatical redundancies (like shrug + shoulder)
+    nlp = _get_nlp()
+    dialogue_spans, _quote_errors = _scan_dialogue(text)
+    masked = _mask_dialogue_spans(text, dialogue_spans)
+    doc = nlp(masked)
+
+    span_idx = 0
+
+    # Grammatical redundancy rules:
+    # verb lemma -> {dependent relationship -> dependent lemma}
+    grammar_rules = {
+        "shrug": {"dobj": "shoulder"},
+        "nod": {"dobj": "head"},
+        "blink": {"dobj": "eye"},
+        "whisper": {"advmod": "softly"},
+        "clap": {"dobj": "hand"},
+        "stomp": {"dobj": "foot"},
+        "kick": {"dobj": "foot"},
+    }
+
+    for sent in doc.sents:
+        for token in sent:
+            tok_start = token.idx
+            tok_end = token.idx + len(token.text)
+
+            in_dialogue, span_idx = _is_in_dialogue(tok_start, tok_end, dialogue_spans, span_idx)
+            if in_dialogue:
+                continue
+
+            verb_lemma = token.lemma_.lower()
+            if verb_lemma in grammar_rules:
+                rules = grammar_rules[verb_lemma]
+                for child in token.children:
+                    if child.dep_ in rules and child.lemma_.lower() == rules[child.dep_]:
+                        # Highlight from the start of the first token to the end of the last token
+                        start = min(token.idx, child.idx)
+                        end = max(token.idx + len(token.text), child.idx + len(child.text))
+                        hits.append((start, end, "redundancy_hit"))
 
     if progress_callback is not None and last_progress < 100:
         progress_callback(100)

@@ -29,7 +29,10 @@ Build EXE only:
 
 powershell
 & .\.venv\Scripts\Activate.ps1
-pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm --collect-all spellchecker editorial.py
+pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm --collect-all pyspellchecker editorial.py
+
+# Extract and decompress dictionary (for portable package and installer)
+python -c "import gzip, json, pkgutil; open('dist/dictionary.json', 'w', encoding='utf-8').write(json.dumps(json.loads(gzip.decompress(pkgutil.get_data('spellchecker', 'resources/en.json.gz')).decode('utf-8')), indent=2))"
 
 Build installer manually:
 

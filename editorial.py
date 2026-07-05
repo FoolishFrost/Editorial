@@ -459,7 +459,27 @@ class EditorialApp:
 
         self.root.config(menu=bar)
 
-        self._spellchecker = SpellChecker()
+        # Attempt to load external dictionary first
+        local_dict_path = "dictionary.json"
+
+        # Check standard locations (next to exe, or cwd)
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller temp dir is sys._MEIPASS, but we want the directory of the executable
+            exe_dir = os.path.dirname(sys.executable)
+            possible_path = os.path.join(exe_dir, local_dict_path)
+            if os.path.exists(possible_path):
+                local_dict_path = possible_path
+
+        if os.path.exists(local_dict_path):
+            try:
+                self._spellchecker = SpellChecker(language=None, local_dictionary=local_dict_path)
+            except Exception:
+                # Fallback
+                self._spellchecker = SpellChecker()
+        else:
+            # Fallback to internal language=en
+            self._spellchecker = SpellChecker()
+
         self._ignored_words: set[str] = set()
         self._custom_dict_path = os.path.join(os.path.dirname(self._settings_path), "custom_dictionary.json")
         self._custom_dict_words: set[str] = set()

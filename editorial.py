@@ -2409,7 +2409,8 @@ class EditorialApp:
             if not content.strip():
                 progress_cb(100)
                 return []
-            from filter_analyzer import analyze_cliches
+            from filter_analyzer import analyze_cliches, reload_cliches
+            reload_cliches()
             hits = analyze_cliches(content, progress_callback=progress_cb)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
@@ -2451,7 +2452,8 @@ class EditorialApp:
             if not content.strip():
                 progress_cb(100)
                 return []
-            from filter_analyzer import analyze_redundancies
+            from filter_analyzer import analyze_redundancies, reload_redundancies
+            reload_redundancies()
             hits = analyze_redundancies(content, progress_callback=progress_cb)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)

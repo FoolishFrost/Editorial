@@ -558,10 +558,14 @@ class ModeSubsystem:
             self._run_pacing_scan_mode()
             return
         if getattr(self, "_cliche_active", False):
+            import filter_analyzer
+            filter_analyzer.reload_cliches()
             self._cliche_update_needed = False
             self._run_cliche_mode()
             return
         if getattr(self, "_redundancy_active", False):
+            import filter_analyzer
+            filter_analyzer.reload_redundancies()
             self._redundancy_update_needed = False
             self._run_redundancy_mode()
             return

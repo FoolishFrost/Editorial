@@ -1280,7 +1280,6 @@ class EditorialApp:
         self._editor_mode_label_var.set(self._mode_to_label.get(mode, "Editor Off"))
         self._update_status_legend()
         self._refresh_tools_mode_markers()
-        self._apply_first_line_indent()
 
         if self._tools_menu is not None and self._tools_refresh_index is not None:
             refresh_state = "disabled" if mode == EDITOR_MODE_OFF else "normal"
@@ -2409,8 +2408,7 @@ class EditorialApp:
             if not content.strip():
                 progress_cb(100)
                 return []
-            from filter_analyzer import analyze_cliches, reload_cliches
-            reload_cliches()
+            from filter_analyzer import analyze_cliches
             hits = analyze_cliches(content, progress_callback=progress_cb)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
@@ -2452,8 +2450,7 @@ class EditorialApp:
             if not content.strip():
                 progress_cb(100)
                 return []
-            from filter_analyzer import analyze_redundancies, reload_redundancies
-            reload_redundancies()
+            from filter_analyzer import analyze_redundancies
             hits = analyze_redundancies(content, progress_callback=progress_cb)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
@@ -3467,7 +3464,6 @@ class EditorialApp:
             self.text.tag_add("first_line_indent", "1.0", "end")
         else:
             self.text.tag_remove("first_line_indent", "1.0", "end")
-            self.text.tag_configure("first_line_indent", lmargin1=0, lmargin2=0)
 
     def _toggle_first_line_indent(self) -> None:
         self._apply_first_line_indent()

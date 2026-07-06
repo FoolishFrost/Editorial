@@ -13,12 +13,19 @@ if (-not (Test-Path $venvActivate)) {
 }
 
 & $venvActivate
-pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm --collect-all spellchecker editorial.py
+pyinstaller --noconfirm --clean --onefile --windowed --name Editorial --collect-all en_core_web_sm --collect-all pyspellchecker editorial.py
 
-Write-Host "[2/4] Creating portable ZIP package..."
+Write-Host "[2/4] Creating portable ZIP package and extracting dictionary..."
 $distExe = Join-Path $repo "dist\Editorial.exe"
 if (-not (Test-Path $distExe)) {
     throw "Expected executable not found at $distExe"
+}
+
+# Extract and decompress the spellchecker dictionary
+$distDict = Join-Path $repo "dist\dictionary.json"
+python -c "import gzip, json, pkgutil, os; data = pkgutil.get_data('spellchecker', 'resources/en.json.gz'); open(r'$distDict', 'w', encoding='utf-8').write(json.dumps(json.loads(gzip.decompress(data).decode('utf-8')), indent=2))"
+if (-not (Test-Path $distDict)) {
+    Write-Warning "Could not extract dictionary.json from spellchecker"
 }
 
 $releaseDir = Join-Path $repo "release"
@@ -35,6 +42,9 @@ if (Test-Path $portableStage) {
 }
 New-Item -ItemType Directory -Force -Path $portableStage | Out-Null
 Copy-Item -Path $distExe -Destination (Join-Path $portableStage "Editorial.exe") -Force
+if (Test-Path $distDict) {
+    Copy-Item -Path $distDict -Destination (Join-Path $portableStage "dictionary.json") -Force
+}
 Compress-Archive -Path (Join-Path $portableStage "*") -DestinationPath $portableZip -CompressionLevel Optimal
 Remove-Item -Path $portableStage -Recurse -Force
 

@@ -123,10 +123,13 @@ def _get_cliches_matcher_patterns(nlp):
             
             pattern = [{"LEMMA": lemmas[0].lower()}]
             if len(lemmas) > 1:
-                pattern.append({"OP": "?", "IS_ALPHA": True})
-                pattern.append({"OP": "?", "IS_ALPHA": True})
-                pattern.append({"OP": "?", "IS_ALPHA": True})
+                # Up to 3 optional words between the first and second lemma
+                for _ in range(3):
+                    pattern.append({"OP": "?", "IS_PUNCT": False, "IS_SPACE": False})
+                # Allow up to 2 optional words before subsequent lemmas
                 for lemma in lemmas[1:]:
+                    for _ in range(2):
+                        pattern.append({"OP": "?", "IS_PUNCT": False, "IS_SPACE": False})
                     pattern.append({"LEMMA": lemma.lower()})
             _CLICHES_MATCHER_PATTERNS.append((phrase_clean, pattern))
     return _CLICHES_MATCHER_PATTERNS

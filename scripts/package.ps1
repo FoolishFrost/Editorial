@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.1.1"
+    [string]$Version = "1.2.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +28,10 @@ if (-not (Test-Path $distDict)) {
     Write-Warning "Could not extract dictionary.json from spellchecker"
 }
 
+# Copy cliches.txt and redundancies.txt to dist/
+Copy-Item -Path (Join-Path $repo "cliches.txt") -Destination (Join-Path $repo "dist\cliches.txt") -Force
+Copy-Item -Path (Join-Path $repo "redundancies.txt") -Destination (Join-Path $repo "dist\redundancies.txt") -Force
+
 $releaseDir = Join-Path $repo "release"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
@@ -44,6 +48,14 @@ New-Item -ItemType Directory -Force -Path $portableStage | Out-Null
 Copy-Item -Path $distExe -Destination (Join-Path $portableStage "Editorial.exe") -Force
 if (Test-Path $distDict) {
     Copy-Item -Path $distDict -Destination (Join-Path $portableStage "dictionary.json") -Force
+}
+$distCliches = Join-Path $repo "dist\cliches.txt"
+if (Test-Path $distCliches) {
+    Copy-Item -Path $distCliches -Destination (Join-Path $portableStage "cliches.txt") -Force
+}
+$distRedundancies = Join-Path $repo "dist\redundancies.txt"
+if (Test-Path $distRedundancies) {
+    Copy-Item -Path $distRedundancies -Destination (Join-Path $portableStage "redundancies.txt") -Force
 }
 Compress-Archive -Path (Join-Path $portableStage "*") -DestinationPath $portableZip -CompressionLevel Optimal
 Remove-Item -Path $portableStage -Recurse -Force

@@ -56,7 +56,7 @@ from filter_analyzer import (
 )
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
@@ -222,6 +222,10 @@ class EditorialApp:
         self._echo_focus_refresh_job: str | None = None
         self._echo_focus_window_words: int = 80
         self._echo_slider_var = tk.IntVar(value=80)
+        self._pacing_long_words: int = 19
+        self._pacing_short_words: int = 4
+        self._pacing_average_words: int = 12
+        self._pacing_slider_var = tk.IntVar(value=19)
         self._dialogue_tag_hits: list[tuple[int, int]] = []
         self._dialogue_tag_hit_fracs: list[float] = []
         self._typography_hits: list[tuple[int, int]] = []
@@ -608,6 +612,25 @@ class EditorialApp:
             variable=self._echo_slider_var,
             length=120,
             command=self._on_echo_range_changed,
+            style="Horizontal.TScale",
+        )
+
+        self._pacing_slider_label = tk.Label(
+            self._toolbar,
+            text=f"Pacing Limit: {self._pacing_long_words}",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+        )
+
+        self._pacing_slider = ttk.Scale(
+            self._toolbar,
+            from_=5,
+            to=50,
+            orient=tk.HORIZONTAL,
+            variable=self._pacing_slider_var,
+            length=120,
+            command=self._on_pacing_limit_changed,
             style="Horizontal.TScale",
         )
 
@@ -1392,9 +1415,9 @@ class EditorialApp:
 
         if mode == EDITOR_MODE_FILTER:
             if not self._pov_label.winfo_manager():
-                self._pov_label.pack(side=tk.LEFT, padx=(8, 6))
+                self._pov_label.pack(side=tk.LEFT, padx=(8, 6), after=self._mode_combo)
             if not self._pov_combo.winfo_manager():
-                self._pov_combo.pack(side=tk.LEFT, padx=(0, 6))
+                self._pov_combo.pack(side=tk.LEFT, padx=(0, 6), after=self._pov_label)
         else:
             if self._pov_combo.winfo_manager():
                 self._pov_combo.pack_forget()
@@ -1403,14 +1426,25 @@ class EditorialApp:
 
         if mode == EDITOR_MODE_ECHO:
             if not self._echo_slider_label.winfo_manager():
-                self._echo_slider_label.pack(side=tk.LEFT, padx=(8, 6))
+                self._echo_slider_label.pack(side=tk.LEFT, padx=(8, 6), after=self._mode_combo)
             if not self._echo_slider.winfo_manager():
-                self._echo_slider.pack(side=tk.LEFT, padx=(0, 6))
+                self._echo_slider.pack(side=tk.LEFT, padx=(0, 6), after=self._echo_slider_label)
         else:
             if self._echo_slider.winfo_manager():
                 self._echo_slider.pack_forget()
             if self._echo_slider_label.winfo_manager():
                 self._echo_slider_label.pack_forget()
+
+        if mode == EDITOR_MODE_PACING:
+            if not self._pacing_slider_label.winfo_manager():
+                self._pacing_slider_label.pack(side=tk.LEFT, padx=(8, 6), after=self._mode_combo)
+            if not self._pacing_slider.winfo_manager():
+                self._pacing_slider.pack(side=tk.LEFT, padx=(0, 6), after=self._pacing_slider_label)
+        else:
+            if self._pacing_slider.winfo_manager():
+                self._pacing_slider.pack_forget()
+            if self._pacing_slider_label.winfo_manager():
+                self._pacing_slider_label.pack_forget()
 
     def set_editor_mode(self, mode: str) -> None:
         if mode not in self._mode_to_label:
@@ -1798,9 +1832,9 @@ class EditorialApp:
             ranges: list[tuple[int, int, str]] = []
             for ws, we, heat, _wc in analyze_sentence_pacing(
                 text,
-                short_max_words=PACING_SHORT_WORDS,
-                average_words=PACING_AVERAGE_WORDS,
-                long_min_words=PACING_LONG_WORDS,
+                short_max_words=self._pacing_short_words,
+                average_words=self._pacing_average_words,
+                long_min_words=self._pacing_long_words,
             ):
                 ranges.append((ws, we, self._pacing_tag_from_heat(heat)))
             return sorted(ranges, key=lambda x: x[0])
@@ -2748,9 +2782,9 @@ class EditorialApp:
                 return []
             bands = analyze_sentence_pacing(
                 content,
-                short_max_words=PACING_SHORT_WORDS,
-                average_words=PACING_AVERAGE_WORDS,
-                long_min_words=PACING_LONG_WORDS,
+                short_max_words=self._pacing_short_words,
+                average_words=self._pacing_average_words,
+                long_min_words=self._pacing_long_words,
                 progress_callback=progress_cb,
             )
             return bands
@@ -2780,9 +2814,9 @@ class EditorialApp:
                     start, stop = norm
                     tag = self._pacing_tag_from_heat(heat)
                     self.text.tag_add(tag, f"1.0 + {start}c", f"1.0 + {stop}c")
-                    if wc <= PACING_SHORT_WORDS:
+                    if wc <= self._pacing_short_words:
                         very_short_count += 1
-                    elif wc >= PACING_LONG_WORDS:
+                    elif wc >= self._pacing_long_words:
                         long_count += 1
                     start_frac = max(0.0, min(0.999999, start / total_chars))
                     stop_frac = max(start_frac, min(0.999999, stop / total_chars))
@@ -2797,8 +2831,8 @@ class EditorialApp:
                     self._show_pacing_lane()
                 self._redraw_pacing_lane()
                 done(
-                    f"Rhythm & pacing - <= {PACING_SHORT_WORDS} words: {very_short_count}, "
-                    f">= {PACING_LONG_WORDS} words: {long_count}"
+                    f"Rhythm & Pacing: {very_short_count:,} short (<= {self._pacing_short_words} words) | "
+                    f"{long_count:,} long (>= {self._pacing_long_words} words)"
                 )
 
             run_chunk()
@@ -3367,6 +3401,16 @@ class EditorialApp:
             self._echo_focus_window_words = int_val
             self._mark_echo_needs_update()
 
+    def _on_pacing_limit_changed(self, val) -> None:
+        int_val = int(float(val))
+        self._pacing_slider_label.config(text=f"Pacing Limit: {int_val}")
+        if int_val != self._pacing_long_words:
+            self._pacing_long_words = int_val
+            self._pacing_short_words = math.ceil(int_val * 0.2)
+            self._pacing_average_words = math.ceil(int_val * 0.6)
+            self._update_status_legend()
+            self._mark_pacing_needs_update()
+
     def show_pov_names_dialog(self) -> None:
         if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
             self._pov_names_dialog.deiconify()
@@ -3702,9 +3746,9 @@ class EditorialApp:
             EDITOR_MODE_EMOTION: [(RED_FG, "Emotion Word")],
             EDITOR_MODE_ECHO: [(ACCENT, "Echo Repeat")],
             EDITOR_MODE_PACING: [
-                ("#4ea4ff", f"Short (<= {PACING_SHORT_WORDS})"),
-                (GREEN_FG, f"Balanced (~{PACING_AVERAGE_WORDS})"),
-                (RED_FG, f"Long (>= {PACING_LONG_WORDS})"),
+                ("#4ea4ff", f"Short (<= {self._pacing_short_words})"),
+                (GREEN_FG, f"Balanced (~{self._pacing_average_words})"),
+                (RED_FG, f"Long (>= {self._pacing_long_words})"),
             ],
             EDITOR_MODE_CLICHE: [("#80cbc4", "Cliche")],
             EDITOR_MODE_REDUNDANCY: [("#ffee58", "Redundancy")],

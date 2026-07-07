@@ -1,4 +1,4 @@
-﻿Editorial Build And Release Rules
+Editorial Build And Release Rules
 =================================
 
 Use this file as the source of truth for build/release workflow.
@@ -57,6 +57,9 @@ Mandatory Build Verifications
   - release/Editorial-Setup-X.Y.Z.exe
 - Confirm portable package filename matches target version:
    - release/Editorial-X.Y.Z-portable.zip
+- Confirm that required external resources are copied to build outputs:
+  - dist/dictionary.json, dist/cliches.txt, and dist/redundancies.txt exist.
+  - The portable ZIP packages all three external resources.
 - Confirm app/runtime version values align:
   - editorial.py APP_VERSION == X.Y.Z
   - scripts/package.ps1 default Version == X.Y.Z

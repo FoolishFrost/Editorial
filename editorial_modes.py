@@ -455,7 +455,14 @@ class ModeSubsystem:
             return
         if self._filter_refresh_btn.winfo_manager():
             return
-        self._filter_refresh_btn.pack(side=tk.LEFT, padx=(2, 8), after=self._mode_combo)
+        anchor = self._mode_combo
+        if self.filter_active and hasattr(self, "_pov_combo") and self._pov_combo.winfo_manager():
+            anchor = self._pov_combo
+        elif self._echo_active and hasattr(self, "_echo_slider") and self._echo_slider.winfo_manager():
+            anchor = self._echo_slider
+        elif self._pacing_active and hasattr(self, "_pacing_slider") and self._pacing_slider.winfo_manager():
+            anchor = self._pacing_slider
+        self._filter_refresh_btn.pack(side=tk.LEFT, padx=(2, 8), after=anchor)
 
     def _hide_filter_refresh_button(self) -> None:
         if self._filter_refresh_btn.winfo_manager():
@@ -602,6 +609,8 @@ class ModeSubsystem:
         ]
         if hasattr(self, "_echo_slider"):
             controls.append(self._echo_slider)
+        if hasattr(self, "_pacing_slider"):
+            controls.append(self._pacing_slider)
         for widget in controls:
             try:
                 state = str(widget.cget("state"))

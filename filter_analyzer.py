@@ -139,9 +139,9 @@ _TAG_CHAIN_RE = re.compile(
 )
 _UPPER_PRONOUNS = {"He", "She", "They", "We", "You", "It", "I"}
 _STANDARD_TAG_VERBS = {"said", "asked"}
-_OPEN_SENTENCE_PUNCT = '"([{\u201c'
-_CLOSE_SENTENCE_PUNCT = '")]}\u201d!?.,;:\u2026'
-_SENTENCE_END_CHARS = ".!?"
+_OPEN_SENTENCE_PUNCT = '"\'\u201c\u2018({['
+_CLOSE_SENTENCE_PUNCT = '")]}\u201d\u2019\'!?.,;:\u2026'
+_SENTENCE_END_CHARS = ".!?\u2026"
 _COMMON_ABBREVIATIONS = {
     "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.",
     "vs.", "etc.", "e.g.", "i.e.", "a.m.", "p.m.",
@@ -614,36 +614,44 @@ def analyze_sentence_pacing(
         ch = block[idx]
         if ch not in _SENTENCE_END_CHARS:
             return False
+
+        # Ellipsis terminal checks
+        is_ellipsis = (ch == "\u2026")
         if ch == ".":
             prev_ch = block[idx - 1] if idx > 0 else ""
             next_ch = block[idx + 1] if idx + 1 < len(block) else ""
-
-            # Ellipsis is treated as a pacing pause unless the final dot lands
-            # at a hard line break or block end, where authors often use it as
-            # terminal punctuation.
             if prev_ch == "." or next_ch == ".":
-                run_start = idx
-                run_end = idx
-                while run_start > 0 and block[run_start - 1] == ".":
-                    run_start -= 1
+                is_ellipsis = True
+
+        if is_ellipsis:
+            run_end = idx
+            if ch == ".":
                 while run_end + 1 < len(block) and block[run_end + 1] == ".":
                     run_end += 1
 
-                if idx != run_end:
-                    return False
+            if ch == "." and idx != run_end:
+                return False
 
-                tail = run_end + 1
-                while tail < len(block) and block[tail] in '"\'”)]}!?,;:':
-                    tail += 1
+            tail = run_end + 1
+            while tail < len(block) and block[tail] in '"\'”’\u201d\u2019)]}!?,;:':
+                tail += 1
 
-                saw_linebreak = False
-                while tail < len(block) and block[tail].isspace():
-                    if block[tail] in "\r\n":
-                        saw_linebreak = True
-                    tail += 1
+            saw_linebreak = False
+            while tail < len(block) and block[tail].isspace():
+                if block[tail] in "\r\n":
+                    saw_linebreak = True
+                tail += 1
 
-                return saw_linebreak or tail >= len(block)
+            is_terminal = saw_linebreak or tail >= len(block)
+            if not is_terminal and tail < len(block):
+                # If followed by a capital letter, treat as terminal
+                if block[tail].isupper():
+                    is_terminal = True
+            return is_terminal
 
+        if ch == ".":
+            prev_ch = block[idx - 1] if idx > 0 else ""
+            next_ch = block[idx + 1] if idx + 1 < len(block) else ""
             # Don't split decimals.
             if prev_ch.isdigit() and next_ch.isdigit():
                 return False
@@ -687,7 +695,7 @@ def analyze_sentence_pacing(
     # lines can never merge into phantom long "sentences".
     cursor = 0
     while cursor < len(text):
-        match = re.search(r"\n[ \t]*\n+", text[cursor:])
+        match = re.search(r"\r?\n+", text[cursor:])
         if match is None:
             block_end = len(text)
             next_cursor = len(text)

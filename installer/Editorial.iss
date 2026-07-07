@@ -2,7 +2,7 @@
 ; Build with: ISCC installer\Editorial.iss
 
 #define MyAppName "Editorial"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Foolish Designs"
 #define MyAppCreator "John Bowden"
 #define MyAppSupportEmail "johnbowden@foolishdesigns.com"
@@ -43,6 +43,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\dictionary.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\cliches.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\redundancies.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -50,6 +52,11 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+
+
+
+
 
 
 

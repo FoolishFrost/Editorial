@@ -16,6 +16,7 @@ Features
 """
 
 from __future__ import annotations
+import gzip
 import json
 import os
 import sys
@@ -27,6 +28,7 @@ import bisect
 import ctypes
 import subprocess
 import webbrowser
+import pkgutil
 from spellchecker import SpellChecker
 from collections import Counter
 from urllib import error as urlerror
@@ -62,6 +64,27 @@ GITHUB_REPO = "FoolishFrost/Editorial"
 WIKI_URL = "https://github.com/FoolishFrost/Editorial/wiki"
 RELEASES_URL = "https://github.com/FoolishFrost/Editorial/releases"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+
+def _extract_spellcheck_tokens(content: str) -> list[tuple[str, tuple[int, int]]]:
+    tokens: list[tuple[str, tuple[int, int]]] = []
+    for match in re.finditer(r"[A-Za-z]+(?:'[A-Za-z]+)?", content):
+        word = match.group(0)
+        if "'" in word:
+            continue
+        tokens.append((word, match.span()))
+    return tokens
+
+
+def _write_spellchecker_dictionary_file(payload: bytes, destination: str) -> str:
+    destination_path = os.path.abspath(destination)
+    directory = os.path.dirname(destination_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(destination_path, "wb") as fh:
+        fh.write(gzip.decompress(payload))
+    return destination_path
+
 
 # ---------------------------------------------------------------------------
 # Colour palette  (Catppuccin Mocha-inspired dark theme)
@@ -263,6 +286,7 @@ class EditorialApp:
         self._spellcheck_active: bool = True
         self._spellcheck_run_seq: int = 0
         self._spellcheck_job: str | None = None
+        self._spellcheck_toggle_var = tk.BooleanVar(value=True)
         for method_name in ModeSubsystem.EXPORTED_METHODS:
             setattr(self, method_name, getattr(self._modes, method_name))
         self._indicators = IndicatorSubsystem(
@@ -439,6 +463,12 @@ class EditorialApp:
         )
         self._tools_mode_entries.append((int(tm.index("end")), "Passive Voice", EDITOR_MODE_PASSIVE))
         tm.add_separator()
+        tm.add_checkbutton(
+            label="Spelling Checker",
+            variable=self._spellcheck_toggle_var,
+            command=self._toggle_spellcheck,
+        )
+        tm.add_separator()
         tm.add_command(label="Refresh", command=self._on_filter_refresh_clicked)
         self._tools_refresh_index = int(tm.index("end"))
         tm.add_command(label="Set POV Names…", command=self.show_pov_names_dialog)
@@ -459,26 +489,32 @@ class EditorialApp:
 
         self.root.config(menu=bar)
 
-        # Attempt to load external dictionary first
         local_dict_path = "dictionary.json"
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else None
 
-        # Check standard locations (next to exe, or cwd)
-        if hasattr(sys, '_MEIPASS'):
-            # PyInstaller temp dir is sys._MEIPASS, but we want the directory of the executable
-            exe_dir = os.path.dirname(sys.executable)
+        if exe_dir:
             possible_path = os.path.join(exe_dir, local_dict_path)
-            if os.path.exists(possible_path):
-                local_dict_path = possible_path
+            if not os.path.exists(possible_path):
+                try:
+                    payload = pkgutil.get_data("spellchecker", "resources/en.json.gz")
+                    if payload:
+                        local_dict_path = _write_spellchecker_dictionary_file(payload, possible_path)
+                except Exception:
+                    local_dict_path = "dictionary.json"
 
         if os.path.exists(local_dict_path):
             try:
                 self._spellchecker = SpellChecker(language=None, local_dictionary=local_dict_path)
             except Exception:
-                # Fallback
-                self._spellchecker = SpellChecker()
+                try:
+                    self._spellchecker = SpellChecker(language="en")
+                except Exception:
+                    self._spellchecker = SpellChecker()
         else:
-            # Fallback to internal language=en
-            self._spellchecker = SpellChecker()
+            try:
+                self._spellchecker = SpellChecker(language="en")
+            except Exception:
+                self._spellchecker = SpellChecker()
 
         self._ignored_words: set[str] = set()
         self._custom_dict_path = os.path.join(os.path.dirname(self._settings_path), "custom_dictionary.json")
@@ -908,6 +944,16 @@ class EditorialApp:
         # Initial spellcheck
         self._schedule_spellcheck()
 
+    def _toggle_spellcheck(self) -> None:
+        self._spellcheck_active = bool(self._spellcheck_toggle_var.get())
+        self.text.tag_remove("misspelled", "1.0", tk.END)
+        if self._spellcheck_active:
+            self._schedule_spellcheck()
+        else:
+            if self._spellcheck_job is not None:
+                self.root.after_cancel(self._spellcheck_job)
+                self._spellcheck_job = None
+
     def _schedule_spellcheck(self) -> None:
         if not self._spellcheck_active:
             return
@@ -929,20 +975,14 @@ class EditorialApp:
                 self.root.after(0, lambda: apply_worker([]))
                 return
 
-            token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
             misspelled = []
 
             # Simple spellcheck scan
             # We process words, keep original casing for checking? pyspellchecker works best with lower.
             # actually we can extract all words and feed them to `spellchecker.unknown`
-            words = []
-            spans = []
-            for m in token_re.finditer(content):
-                word = m.group(0)
-                # Ignore uppercase words if they might be names? We'll let spellchecker handle it.
-                # pyspellchecker ignores numbers automatically if properly split
-                words.append(word)
-                spans.append(m.span())
+            tokens = _extract_spellcheck_tokens(content)
+            words = [word for word, _ in tokens]
+            spans = [span for _, span in tokens]
 
             # Find unknown words
             unknown = self._spellchecker.unknown(words)

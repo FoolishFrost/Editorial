@@ -189,26 +189,52 @@ class IndicatorSubsystem:
             elif getattr(self.app, "_passive_voice_active", False):
                 source_fracs = getattr(self.app, "_passive_voice_hit_fracs", [])
                 fill_color = "#f06292" # Passive voice color
+            elif getattr(self.app, "_arch_active", False):
+                # Sentence Architecture: draw a positional colour strip —
+                # each clause gets a coloured row at its actual document position.
+                _ARCH_SIDEBAR_COLOURS: dict[str, str] = {
+                    "arch_subject_first":          "#a8c8f8",
+                    "arch_subject_first_stacked":  "#c0dbff",
+                    "arch_participial_launch":     "#f9d87a",
+                    "arch_participial_launch_stacked": "#ffe6a3",
+                    "arch_contextual_lead":        "#c4a8f8",
+                    "arch_contextual_lead_stacked": "#dbccff",
+                    "arch_echoing_hinge":          "#f4a07a",
+                    "arch_echoing_hinge_stacked":  "#ffc0a3",
+                    "arch_simultaneous_setup":     "#8a8aaa",
+                    "arch_simultaneous_setup_stacked": "#b4b4d0",
+                }
+                arch_fracs = getattr(self.app, "_arch_hit_fracs", [])
+                total_clauses = max(1, len(arch_fracs))
+                seg_h = max(2, height // max(1, total_clauses))
+                for frac, tag in arch_fracs:
+                    y = int(frac * height)
+                    color = _ARCH_SIDEBAR_COLOURS.get(tag, self.colors["ACCENT"])
+                    self.app._density.create_rectangle(
+                        1, y, width - 1, min(height, y + seg_h),
+                        fill=color, outline="",
+                    )
             else:
                 source_fracs = []
                 fill_color = self.colors["ACCENT"]
 
-            page_counts: list[int] = [0 for _ in range(pages)]
-            for frac in source_fracs:
-                page_idx = min(pages - 1, max(0, int(frac * pages)))
-                page_counts[page_idx] += 1
+            if not getattr(self.app, "_arch_active", False):
+                page_counts: list[int] = [0 for _ in range(pages)]
+                for frac in source_fracs:
+                    page_idx = min(pages - 1, max(0, int(frac * pages)))
+                    page_counts[page_idx] += 1
 
-            max_total = max(page_counts, default=0)
-            avail_w = max(1, width - 2)
+                max_total = max(page_counts, default=0)
+                avail_w = max(1, width - 2)
 
-            for i, total in enumerate(page_counts):
-                y1 = int((i * height) / pages)
-                y2 = max(y1 + 1, int(((i + 1) * height) / pages))
-                if total <= 0 or max_total <= 0:
-                    continue
+                for i, total in enumerate(page_counts):
+                    y1 = int((i * height) / pages)
+                    y2 = max(y1 + 1, int(((i + 1) * height) / pages))
+                    if total <= 0 or max_total <= 0:
+                        continue
 
-                row_w = max(1, int((total / max_total) * avail_w))
-                self.app._density.create_rectangle(1, y1, 1 + row_w, y2, fill=fill_color, outline="")
+                    row_w = max(1, int((total / max_total) * avail_w))
+                    self.app._density.create_rectangle(1, y1, 1 + row_w, y2, fill=fill_color, outline="")
 
         if self.app._quote_band_visible:
             qwidth = max(8, self.app._quote_dots.winfo_width())

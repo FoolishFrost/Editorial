@@ -531,6 +531,8 @@ class ModeSubsystem:
             self._mark_redundancy_needs_update()
         elif getattr(self, "_passive_voice_active", False):
             self._mark_passive_voice_needs_update()
+        elif getattr(self, "_arch_active", False):
+            self._mark_arch_needs_update()
 
     def _on_filter_refresh_clicked(self) -> None:
         if self._is_editor_processing():
@@ -575,6 +577,10 @@ class ModeSubsystem:
         if getattr(self, "_passive_voice_active", False):
             self._passive_voice_update_needed = False
             self._run_passive_voice_mode()
+            return
+        if getattr(self, "_arch_active", False):
+            self._arch_update_needed = False
+            self._run_arch_mode()
             return
 
     def _finish_filter_processing(self) -> None:

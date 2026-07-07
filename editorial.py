@@ -56,7 +56,7 @@ from filter_analyzer import (
 )
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
@@ -153,6 +153,7 @@ EDITOR_MODE_PACING = "rhythm_pacing"
 EDITOR_MODE_CLICHE = "cliches"
 EDITOR_MODE_REDUNDANCY = "redundancies"
 EDITOR_MODE_PASSIVE = "passive_voice"
+EDITOR_MODE_ARCH = "sentence_architecture"
 
 EDITOR_MODES: list[tuple[str, str]] = [
     ("Editor Off", EDITOR_MODE_OFF),
@@ -166,7 +167,37 @@ EDITOR_MODES: list[tuple[str, str]] = [
     ("Cliches", EDITOR_MODE_CLICHE),
     ("Redundancies", EDITOR_MODE_REDUNDANCY),
     ("Passive Voice", EDITOR_MODE_PASSIVE),
+    ("Sentence Architecture", EDITOR_MODE_ARCH),
 ]
+
+ARCH_TAG_STYLES: tuple[tuple[str, str, str, bool], ...] = (
+    # Normal tags
+    ("arch_subject_first",          "#1e2d3e", "#a8c8f8", False),  # soft blue
+    ("arch_participial_launch",     "#382d10", "#f9d87a", False),  # warm amber
+    ("arch_contextual_lead",        "#291e3b", "#c4a8f8", False),  # soft purple
+    ("arch_echoing_hinge",          "#3c1e10", "#f4a07a", False),  # coral
+    ("arch_simultaneous_setup",     "#20202c", "#8a8aaa", False),  # pale grey
+
+    # Stacked tags (intensified and bordered)
+    ("arch_subject_first_stacked",          "#2d4460", "#c0dbff", True),
+    ("arch_participial_launch_stacked",     "#544318", "#ffe6a3", True),
+    ("arch_contextual_lead_stacked",        "#3f2e5a", "#dbccff", True),
+    ("arch_echoing_hinge_stacked",          "#5a2d18", "#ffc0a3", True),
+    ("arch_simultaneous_setup_stacked",     "#303042", "#b4b4d0", True),
+)
+
+ARCH_EXPORT_LABELS: dict[str, str] = {
+    "arch_subject_first":          "SUBJECT_FIRST",
+    "arch_subject_first_stacked":  "SUBJECT_FIRST_STACKED",
+    "arch_participial_launch":     "PARTICIPIAL_LAUNCH",
+    "arch_participial_launch_stacked": "PARTICIPIAL_LAUNCH_STACKED",
+    "arch_contextual_lead":        "CONTEXTUAL_LEAD",
+    "arch_contextual_lead_stacked": "CONTEXTUAL_LEAD_STACKED",
+    "arch_echoing_hinge":          "ECHOING_HINGE",
+    "arch_echoing_hinge_stacked":  "ECHOING_HINGE_STACKED",
+    "arch_simultaneous_setup":     "SIMULTANEOUS_SETUP",
+    "arch_simultaneous_setup_stacked": "SIMULTANEOUS_SETUP_STACKED",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -205,9 +236,12 @@ class EditorialApp:
         self._emotion_active: bool = False
         self._echo_active: bool = False
         self._pacing_active: bool = False
+        self._arch_active: bool = False
+        self._arch_update_needed: bool = False
         self._active_editor_mode: str = EDITOR_MODE_OFF
         self._editor_mode_var = tk.StringVar(value=EDITOR_MODE_OFF)
         self._editor_mode_label_var = tk.StringVar(value="Editor Off")
+        self._arch_ignore_dialogue_var = tk.BooleanVar(value=False)
         self._mode_to_label = {value: label for label, value in EDITOR_MODES}
         self._label_to_mode = {label: value for label, value in EDITOR_MODES}
         self._weak_mod_hits: list[tuple[int, int]] = []
@@ -276,6 +310,8 @@ class EditorialApp:
         self._pacing_lane_visible: bool = False
         self._pacing_heat_spans: list[tuple[float, float, float]] = []
         self._pacing_viewport_id: int | None = None
+        self._arch_hits: list[tuple[int, int, str]] = []
+        self._arch_hit_fracs: list[tuple[float, str]] = []
         self._find_dialog: tk.Toplevel | None = None
         self._find_var = tk.StringVar()
         self._replace_var = tk.StringVar()
@@ -468,6 +504,13 @@ class EditorialApp:
             command=self._on_tools_mode_selected,
         )
         self._tools_mode_entries.append((int(tm.index("end")), "Passive Voice", EDITOR_MODE_PASSIVE))
+        tm.add_radiobutton(
+            label="Sentence Architecture",
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_ARCH,
+            command=self._on_tools_mode_selected,
+        )
+        self._tools_mode_entries.append((int(tm.index("end")), "Sentence Architecture", EDITOR_MODE_ARCH))
         tm.add_separator()
         tm.add_checkbutton(
             label="Spelling Checker",
@@ -633,6 +676,21 @@ class EditorialApp:
             length=120,
             command=self._on_pacing_limit_changed,
             style="Horizontal.TScale",
+        )
+
+        self._arch_ignore_dialogue_check = tk.Checkbutton(
+            self._toolbar,
+            text="Ignore Dialogue",
+            variable=self._arch_ignore_dialogue_var,
+            command=self._on_arch_ignore_dialogue_changed,
+            bg=BG_SURFACE,
+            fg=TEXT,
+            selectcolor=BG_SURFACE,
+            activebackground=BG_SURFACE,
+            activeforeground=TEXT,
+            font=("Segoe UI", 9),
+            bd=0,
+            highlightthickness=0,
         )
 
         self._ngram_btn = tk.Button(
@@ -970,6 +1028,19 @@ class EditorialApp:
                 background=bg,
                 foreground=fg,
             )
+        for tag_tuple in ARCH_TAG_STYLES:
+            tag_name, bg, fg = tag_tuple[:3]
+            self.text.tag_configure(
+                tag_name,
+                background=bg,
+                foreground=fg,
+            )
+            if len(tag_tuple) > 3 and tag_tuple[3]:
+                self.text.tag_configure(
+                    tag_name,
+                    relief="solid",
+                    borderwidth=1,
+                )
         self.text.tag_configure("find_match",
                     background=FIND_BG, foreground=TEXT)
         self.text.tag_configure("first_line_indent", lmargin1=0, lmargin2=0)
@@ -1380,6 +1451,7 @@ class EditorialApp:
             or getattr(self, "_cliche_active", False)
             or getattr(self, "_redundancy_active", False)
             or getattr(self, "_passive_voice_active", False)
+            or getattr(self, "_arch_active", False)
         )
 
     def _mode_uses_quote_band(self) -> bool:
@@ -1447,6 +1519,13 @@ class EditorialApp:
             if self._pacing_slider_label.winfo_manager():
                 self._pacing_slider_label.pack_forget()
 
+        if mode == EDITOR_MODE_ARCH:
+            if not self._arch_ignore_dialogue_check.winfo_manager():
+                self._arch_ignore_dialogue_check.pack(side=tk.LEFT, padx=(8, 6), after=self._mode_combo)
+        else:
+            if self._arch_ignore_dialogue_check.winfo_manager():
+                self._arch_ignore_dialogue_check.pack_forget()
+
     def set_editor_mode(self, mode: str) -> None:
         if mode not in self._mode_to_label:
             mode = EDITOR_MODE_OFF
@@ -1472,6 +1551,7 @@ class EditorialApp:
         self._cliche_update_needed = False
         self._redundancy_update_needed = False
         self._passive_voice_update_needed = False
+        self._arch_update_needed = False
         self._hide_filter_refresh_button()
 
         self.filter_active = False
@@ -1484,6 +1564,7 @@ class EditorialApp:
         self._cliche_active = False
         self._redundancy_active = False
         self._passive_voice_active = False
+        self._arch_active = False
 
         self._clear_filter()
         self._clear_weak_modifiers()
@@ -1495,6 +1576,7 @@ class EditorialApp:
         self._clear_cliche_highlights()
         self._clear_redundancy_highlights()
         self._clear_passive_voice_highlights()
+        self._clear_arch_highlights()
         self._hide_quote_band()
         self._hide_density_band()
 
@@ -1562,6 +1644,12 @@ class EditorialApp:
             self._run_passive_voice_mode()
             return
 
+        if mode == EDITOR_MODE_ARCH:
+            self._show_density_band()
+            self._arch_active = True
+            self._run_arch_mode()
+            return
+
     def save_file(self) -> None:
         if self.current_file:
             self._write(self.current_file)
@@ -1599,6 +1687,13 @@ class EditorialApp:
 
         self._run_task_with_progress("Exporting RTF...", task, "RTF export complete.")
 
+    def _mark_arch_needs_update(self) -> None:
+        if not getattr(self, "_arch_active", False):
+            return
+        self._arch_update_needed = True
+        self._show_filter_refresh_button()
+        self._lbl_filter.config(text="Sentence Architecture - changes pending (click Refresh)")
+
     def export_tagged_text(self) -> None:
         path = filedialog.asksaveasfilename(
             defaultextension=".txt",
@@ -1630,6 +1725,8 @@ class EditorialApp:
                 label_map = {"redundancy_hit": "REDUNDANCY"}
             elif mode == EDITOR_MODE_PASSIVE:
                 label_map = {"passive_voice_hit": "PASSIVE_VOICE"}
+            elif mode == EDITOR_MODE_ARCH:
+                label_map = dict(ARCH_EXPORT_LABELS)
             tagged = self._build_tagged_export(text, ranges, label_map)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
@@ -1900,6 +1997,13 @@ class EditorialApp:
                 [(ws, we, "red" if cls == "yellow" else cls) for ws, we, cls in hits_raw],
                 key=lambda x: x[0],
             )
+        if mode == EDITOR_MODE_ARCH:
+            if not getattr(self, "_arch_update_needed", False) and getattr(self, "_arch_hits", None):
+                return sorted(self._arch_hits, key=lambda x: x[0])
+            if getattr(self, "_arch_ignore_dialogue_var", None) and self._arch_ignore_dialogue_var.get():
+                text = self._mask_dialogue_text(text)
+            from filter_analyzer import analyze_sentence_architecture
+            return sorted(analyze_sentence_architecture(text), key=lambda x: x[0])
         return []
 
     def _build_tagged_export(
@@ -1978,6 +2082,18 @@ class EditorialApp:
             "cliche_hit": (13, 14),       # #80cbc4 on #004d40
             "redundancy_hit": (15, 16),   # #ffee58 on #4d4d00
             "passive_voice_hit": (17, 18),# #f06292 on #4a0024
+            # Arch: Normal tags
+            "arch_subject_first":          (19, 20),   # #a8c8f8 on #1e2d3e
+            "arch_participial_launch":     (21, 22),   # #f9d87a on #382d10
+            "arch_contextual_lead":        (23, 24),   # #c4a8f8 on #291e3b
+            "arch_echoing_hinge":          (25, 26),   # #f4a07a on #3c1e10
+            "arch_simultaneous_setup":     (27, 28),   # #8a8aaa on #20202c
+            # Arch: Stacked tags (with border/intensified colors)
+            "arch_subject_first_stacked":          (29, 30),   # #c0dbff on #2d4460
+            "arch_participial_launch_stacked":     (31, 32),   # #ffe6a3 on #544318
+            "arch_contextual_lead_stacked":        (33, 34),   # #dbccff on #3f2e5a
+            "arch_echoing_hinge_stacked":          (35, 36),   # #ffc0a3 on #5a2d18
+            "arch_simultaneous_setup_stacked":     (37, 38),   # #b4b4d0 on #303042
         }
 
         chunks: list[str] = []
@@ -1990,10 +2106,11 @@ class EditorialApp:
             word = self._rtf_escape(text[start:end])
             cf, highlight = level_colors.get(level, (1, 2))
             underline = level in {"quote", "dash", "ellipsis", "loud", "echo", "typography", "dialogue_tag"}
+            is_arch_stacked = level.endswith("_stacked")
             prefix = r"{\cf" + str(cf) + r"\highlight" + str(highlight) + " "
-            if underline:
+            if underline or is_arch_stacked:
                 prefix += r"\ul "
-            suffix = r"\ul0\highlight0\cf0 }" if underline else r"\highlight0\cf0 }"
+            suffix = r"\ul0\highlight0\cf0 }" if (underline or is_arch_stacked) else r"\highlight0\cf0 }"
             chunks.append(prefix + word + suffix)
             pos = end
         chunks.append(self._rtf_escape(text[pos:]))
@@ -2018,6 +2135,26 @@ class EditorialApp:
             r"\red77\green77\blue0;"       # 16 Redundancy BG #4d4d00
             r"\red240\green98\blue146;"    # 17 Passive FG #f06292
             r"\red74\green0\blue36;"       # 18 Passive BG #4a0024
+            r"\red168\green200\blue248;"   # 19 Arch Subject First FG  #a8c8f8
+            r"\red30\green45\blue62;"      # 20 Arch Subject First BG  #1e2d3e
+            r"\red249\green216\blue122;"   # 21 Arch Participial Launch FG #f9d87a
+            r"\red56\green45\blue16;"      # 22 Arch Participial Launch BG #382d10
+            r"\red196\green168\blue248;"   # 23 Arch Contextual Lead FG  #c4a8f8
+            r"\red41\green30\blue59;"      # 24 Arch Contextual Lead BG  #291e3b
+            r"\red244\green160\blue122;"   # 25 Arch Echoing Hinge FG #f4a07a
+            r"\red60\green30\blue16;"      # 26 Arch Echoing Hinge BG #3c1e10
+            r"\red138\green138\blue170;"   # 27 Arch Simultaneous Setup FG #8a8aaa
+            r"\red32\green32\blue44;"      # 28 Arch Simultaneous Setup BG #20202c
+            r"\red192\green219\blue255;"   # 29 Arch Subject First Stacked FG #c0dbff
+            r"\red45\green68\blue96;"      # 30 Arch Subject First Stacked BG #2d4460
+            r"\red255\green230\blue163;"   # 31 Arch Participial Launch Stacked FG #ffe6a3
+            r"\red84\green67\blue24;"      # 32 Arch Participial Launch Stacked BG #544318
+            r"\red219\green204\blue255;"   # 33 Arch Contextual Lead Stacked FG #dbccff
+            r"\red63\green46\blue90;"      # 34 Arch Contextual Lead Stacked BG #3f2e5a
+            r"\red255\green192\blue163;"   # 35 Arch Echoing Hinge Stacked FG #ffc0a3
+            r"\red90\green45\blue24;"      # 36 Arch Echoing Hinge Stacked BG #5a2d18
+            r"\red180\green180\blue208;"   # 37 Arch Simultaneous Setup Stacked FG #b4b4d0
+            r"\red48\green48\blue66;"      # 38 Arch Simultaneous Setup Stacked BG #303042
             r"}"
         )
         header = (
@@ -2232,6 +2369,96 @@ class EditorialApp:
         self.text.tag_remove("dialogue_tag", "1.0", tk.END)
         self._dialogue_tag_hits = []
         self._dialogue_tag_hit_fracs = []
+
+    def _clear_arch_highlights(self) -> None:
+        for tag_tuple in ARCH_TAG_STYLES:
+            self.text.tag_remove(tag_tuple[0], "1.0", tk.END)
+        self._arch_hits = []
+        self._arch_hit_fracs = []
+
+    def _run_arch_mode(self) -> None:
+        def analyze_worker(content: str, progress_cb):
+            if not content.strip():
+                progress_cb(100)
+                return []
+            if getattr(self, "_arch_ignore_dialogue_var", None) and self._arch_ignore_dialogue_var.get():
+                content = self._mask_dialogue_text(content)
+            from filter_analyzer import analyze_sentence_architecture
+            return analyze_sentence_architecture(content, progress_callback=progress_cb)
+
+        def apply_worker(run_id: int, hits: list[tuple[int, int, str]], done) -> None:
+            total = len(hits)
+            if total == 0:
+                done("Sentence Architecture - no clauses found")
+                return
+
+            self._arch_hits = [(ws, we, tag) for ws, we, tag in hits]
+            idx = 0
+            step = 400
+
+            def run_chunk() -> None:
+                nonlocal idx, step
+                if run_id != self._mode_wrapper_run_seq:
+                    return
+                t0 = time.perf_counter()
+                end = min(total, idx + step)
+                current_text = self.text.get("1.0", "end-1c")
+                for ws, we, tag in hits[idx:end]:
+                    norm = self._normalize_span(current_text, ws, we)
+                    if norm is None:
+                        continue
+                    ws, we = norm
+                    if we > ws:
+                        self.text.tag_add(tag, f"1.0 + {ws}c", f"1.0 + {we}c")
+                idx = end
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                if elapsed_ms > 0.5:
+                    step = max(60, min(2000, int(step * 8.0 / elapsed_ms)))
+                pct = 56 + int((idx / total) * 42)
+                self._set_editor_progress(pct, "Architecture")
+                if idx < total:
+                    self.root.after(1, run_chunk)
+                else:
+                    # Build density fracs as (frac, tag) pairs
+                    total_chars = max(1, self._text_char_length())
+                    fracs: list[tuple[float, str]] = []
+                    for ws, we, tag in hits:
+                        if we <= ws:
+                            continue
+                        mid = (ws + we) // 2
+                        fracs.append((max(0.0, min(0.999999, mid / total_chars)), tag))
+                    self._arch_hit_fracs = fracs
+
+                    counts: dict[str, int] = {}
+                    for _, _, tag in hits:
+                        base_tag = tag.replace("_stacked", "")
+                        counts[base_tag] = counts.get(base_tag, 0) + 1
+
+                    friendly_labels = {
+                        "arch_subject_first": "Subject-First",
+                        "arch_participial_launch": "Participial Launch",
+                        "arch_contextual_lead": "Contextual Lead",
+                        "arch_echoing_hinge": "Echoing Hinge",
+                        "arch_simultaneous_setup": "Simultaneous",
+                    }
+                    summary_parts = [
+                        f"{friendly_labels.get(t, t)}: {n}"
+                        for t, n in sorted(counts.items())
+                    ]
+                    done(f"Sentence Architecture - {', '.join(summary_parts)}" if summary_parts else "Sentence Architecture")
+
+            run_chunk()
+
+        self._arch_update_needed = False
+        self._hide_filter_refresh_button()
+        self._run_wrapped_mode_scan(
+            mode_label="Architecture",
+            active_check=lambda: getattr(self, "_arch_active", False),
+            clear_before=self._clear_arch_highlights,
+            analyze_worker=analyze_worker,
+            apply_worker=apply_worker,
+            error_title="Sentence Architecture Error",
+        )
 
     def _apply_tag_ranges_progressive(
         self,
@@ -3413,6 +3640,38 @@ class EditorialApp:
             self._update_status_legend()
             self._mark_pacing_needs_update()
 
+    def _on_arch_ignore_dialogue_changed(self) -> None:
+        if getattr(self, "_arch_active", False):
+            self._arch_update_needed = True
+            self._run_arch_mode()
+
+    def _mask_dialogue_text(self, text: str) -> str:
+        chars = list(text)
+        in_quote = False
+        quote_start = -1
+        for i, c in enumerate(chars):
+            if c in ('\r', '\n'):
+                if in_quote and quote_start != -1:
+                    for j in range(quote_start + 1, i):
+                        chars[j] = ' '
+                in_quote = False
+                quote_start = -1
+                continue
+            if c in ('"', '“', '”'):
+                if not in_quote:
+                    in_quote = True
+                    quote_start = i
+                else:
+                    for j in range(quote_start + 1, i):
+                        chars[j] = ' '
+                    in_quote = False
+                    quote_start = -1
+        if in_quote and quote_start != -1:
+            for j in range(quote_start + 1, len(chars)):
+                chars[j] = ' '
+        return "".join(chars)
+
+
     def show_pov_names_dialog(self) -> None:
         if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
             self._pov_names_dialog.deiconify()
@@ -3755,6 +4014,13 @@ class EditorialApp:
             EDITOR_MODE_CLICHE: [("#80cbc4", "Cliche")],
             EDITOR_MODE_REDUNDANCY: [("#ffee58", "Redundancy")],
             EDITOR_MODE_PASSIVE: [("#f06292", "Passive Voice")],
+            EDITOR_MODE_ARCH: [
+                ("#a8c8f8", "Subject-First"),
+                ("#f9d87a", "Participial Launch"),
+                ("#c4a8f8", "Contextual Lead"),
+                ("#f4a07a", "Echoing Hinge"),
+                ("#8a8aaa", "Simultaneous"),
+            ],
         }
 
         items = legend_map.get(self._active_editor_mode, [])

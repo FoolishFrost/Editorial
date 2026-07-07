@@ -56,7 +56,7 @@ from filter_analyzer import (
 )
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
@@ -68,9 +68,10 @@ LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/lates
 
 def _extract_spellcheck_tokens(content: str) -> list[tuple[str, tuple[int, int]]]:
     tokens: list[tuple[str, tuple[int, int]]] = []
-    for match in re.finditer(r"[A-Za-z]+(?:'[A-Za-z]+)?", content):
+    for match in re.finditer(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?", content):
         word = match.group(0)
-        if "'" in word:
+        normalized_word = word.replace("\u2019", "'")
+        if "'" in normalized_word:
             continue
         tokens.append((word, match.span()))
     return tokens
@@ -375,7 +376,7 @@ class EditorialApp:
         pm.add_command(label="Convert to Smart Quotes", command=self._convert_to_smart_quotes)
         pm.add_command(label="Convert to Straight Quotes", command=self._convert_to_straight_quotes)
         pm.add_separator()
-        pm.add_command(label="Convert Ellipses to Spaced", command=self._convert_ellipses_spaced)
+        pm.add_command(label="Convert Ellipses to Standard", command=self._convert_ellipses_spaced)
         pm.add_command(label="Convert Ellipses to Character", command=self._convert_ellipses_char)
         pm.add_separator()
         pm.add_command(label="Clean Whitespace", command=self._clean_whitespace)
@@ -2142,10 +2143,11 @@ class EditorialApp:
             self._replace_text_range(start, end, new_text)
 
     def _convert_ellipses_spaced(self) -> None:
+        """Convert all ellipsis formats to standard unspaced three-dots (i.e. '...')."""
         start, end, text = self._get_text_range()
         # Find ... or .... or more, … and . . .
-        # The goal is to replace with . . .
-        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '. . .', text)
+        # The goal is to replace with ...
+        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '...', text)
         if new_text != text:
             self._replace_text_range(start, end, new_text)
 

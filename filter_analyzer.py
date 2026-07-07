@@ -103,13 +103,39 @@ _DIALOGUE_RE = re.compile(r'["\u201c\u201d]')
 _FILTER_SET = set(FILTER_LEMMAS)
 _IGNORE_PHRASE_REGEXES = [re.compile(re.escape(phrase)) for phrase in IGNORE_PHRASES]
 
-_CLICHES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in CLICHES_LIST]
+_CLICHES_MATCHER_PATTERNS = None
+_LAST_CLICHES_LIST = None
 _REDUNDANCIES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in REDUNDANCIES_LIST]
 
+def _get_cliches_matcher_patterns(nlp):
+    global _CLICHES_MATCHER_PATTERNS, _LAST_CLICHES_LIST
+    if _CLICHES_MATCHER_PATTERNS is None or _LAST_CLICHES_LIST != CLICHES_LIST:
+        _LAST_CLICHES_LIST = list(CLICHES_LIST)
+        _CLICHES_MATCHER_PATTERNS = []
+        for phrase in CLICHES_LIST:
+            phrase_clean = phrase.strip().lower()
+            if not phrase_clean:
+                continue
+            phrase_doc = nlp(phrase_clean)
+            lemmas = [token.lemma_ for token in phrase_doc]
+            if not lemmas:
+                continue
+            
+            pattern = [{"LEMMA": lemmas[0].lower()}]
+            if len(lemmas) > 1:
+                pattern.append({"OP": "?", "IS_ALPHA": True})
+                pattern.append({"OP": "?", "IS_ALPHA": True})
+                pattern.append({"OP": "?", "IS_ALPHA": True})
+                for lemma in lemmas[1:]:
+                    pattern.append({"LEMMA": lemma.lower()})
+            _CLICHES_MATCHER_PATTERNS.append((phrase_clean, pattern))
+    return _CLICHES_MATCHER_PATTERNS
+
 def reload_cliches() -> None:
-    global CLICHES_LIST, _CLICHES_REGEXES
+    global CLICHES_LIST, _CLICHES_MATCHER_PATTERNS, _LAST_CLICHES_LIST
     CLICHES_LIST = load_or_create_list("cliches.txt", _DEFAULT_CLICHES)
-    _CLICHES_REGEXES = [re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE) for phrase in CLICHES_LIST]
+    _CLICHES_MATCHER_PATTERNS = None
+    _LAST_CLICHES_LIST = None
 
 def reload_redundancies() -> None:
     global REDUNDANCIES_LIST, _REDUNDANCIES_REGEXES
@@ -393,21 +419,25 @@ def analyze_cliches(
             progress_callback(100)
         return []
 
+    nlp = _get_nlp()
+    doc = nlp(text)
+
+    from spacy.matcher import Matcher
+    matcher = Matcher(nlp.vocab)
+
+    patterns = _get_cliches_matcher_patterns(nlp)
+    for phrase, pattern in patterns:
+        matcher.add(phrase, [pattern])
+
     hits: list[tuple[int, int, str]] = []
+    matches = matcher(doc)
 
-    total_chars = max(1, len(text))
-    last_progress = -1
+    for match_id, start_idx, end_idx in matches:
+        start_char = doc[start_idx].idx
+        end_char = doc[end_idx - 1].idx + len(doc[end_idx - 1].text)
+        hits.append((start_char, end_char, "cliche_hit"))
 
-    for i, regex in enumerate(_CLICHES_REGEXES):
-        for match in regex.finditer(text):
-            hits.append((match.start(), match.end(), "cliche_hit"))
-        if progress_callback is not None:
-            pct = max(1, min(100, int((i / len(_CLICHES_REGEXES)) * 100)))
-            if pct != last_progress:
-                progress_callback(pct)
-                last_progress = pct
-
-    if progress_callback is not None and last_progress < 100:
+    if progress_callback is not None:
         progress_callback(100)
 
     return sorted(set(hits), key=lambda x: x[0])

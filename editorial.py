@@ -221,6 +221,7 @@ class EditorialApp:
         self._echo_focus_word: str = ""
         self._echo_focus_refresh_job: str | None = None
         self._echo_focus_window_words: int = 80
+        self._echo_slider_var = tk.IntVar(value=80)
         self._dialogue_tag_hits: list[tuple[int, int]] = []
         self._dialogue_tag_hit_fracs: list[float] = []
         self._typography_hits: list[tuple[int, int]] = []
@@ -591,6 +592,25 @@ class EditorialApp:
         )
         self._pov_combo.bind("<<ComboboxSelected>>", self._on_pov_changed)
 
+        self._echo_slider_label = tk.Label(
+            self._toolbar,
+            text=f"Echo Range: {self._echo_focus_window_words}",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+        )
+
+        self._echo_slider = ttk.Scale(
+            self._toolbar,
+            from_=1,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self._echo_slider_var,
+            length=120,
+            command=self._on_echo_range_changed,
+            style="Horizontal.TScale",
+        )
+
         self._ngram_btn = tk.Button(
             self._toolbar,
             text="N-gram Scan",
@@ -679,6 +699,13 @@ class EditorialApp:
                 self._ngram_style.theme_use("clam")
         except tk.TclError:
             pass
+        self._ngram_style.configure(
+            "Horizontal.TScale",
+            troughcolor=BG_OVERLAY,
+            background=BG_SURFACE,
+            sliderthickness=12,
+            borderwidth=0,
+        )
         self._ngram_style.configure(
             "Ngram.Treeview",
             background=BG,
@@ -1373,6 +1400,17 @@ class EditorialApp:
                 self._pov_combo.pack_forget()
             if self._pov_label.winfo_manager():
                 self._pov_label.pack_forget()
+
+        if mode == EDITOR_MODE_ECHO:
+            if not self._echo_slider_label.winfo_manager():
+                self._echo_slider_label.pack(side=tk.LEFT, padx=(8, 6))
+            if not self._echo_slider.winfo_manager():
+                self._echo_slider.pack(side=tk.LEFT, padx=(0, 6))
+        else:
+            if self._echo_slider.winfo_manager():
+                self._echo_slider.pack_forget()
+            if self._echo_slider_label.winfo_manager():
+                self._echo_slider_label.pack_forget()
 
     def set_editor_mode(self, mode: str) -> None:
         if mode not in self._mode_to_label:
@@ -3321,6 +3359,13 @@ class EditorialApp:
 
     def _on_pov_changed(self, _event=None) -> None:
         self._rerun_filter_for_pov_change()
+
+    def _on_echo_range_changed(self, val) -> None:
+        int_val = int(float(val))
+        self._echo_slider_label.config(text=f"Echo Range: {int_val}")
+        if int_val != self._echo_focus_window_words:
+            self._echo_focus_window_words = int_val
+            self._mark_echo_needs_update()
 
     def show_pov_names_dialog(self) -> None:
         if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():

@@ -600,6 +600,8 @@ class ModeSubsystem:
             self._ngram_btn,
             self._analysis_close,
         ]
+        if hasattr(self, "_echo_slider"):
+            controls.append(self._echo_slider)
         for widget in controls:
             try:
                 state = str(widget.cget("state"))

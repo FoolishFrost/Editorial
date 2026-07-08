@@ -1172,6 +1172,7 @@ class EditorialApp:
             self.text.insert(start, new_text)
             self._mark_active_mode_needs_update()
             self._update_status()
+            self._apply_first_line_indent()
             self._schedule_spellcheck()
         except tk.TclError:
             pass
@@ -1914,15 +1915,26 @@ class EditorialApp:
         except tk.TclError:
             had_sel = False
 
+        # Save cursor position and vertical scroll state
+        cursor_pos = self.text.index(tk.INSERT)
+        y_scroll = self.text.yview()[0]
+
         self.text.delete(start, end)
         self.text.insert(start, new_text)
 
         if had_sel:
             new_end = f"{start}+{len(new_text)}c"
             self.text.tag_add(tk.SEL, start, new_end)
+            self.text.mark_set(tk.INSERT, new_end)
+        else:
+            self.text.mark_set(tk.INSERT, cursor_pos)
+
+        self.text.yview_moveto(y_scroll)
 
         self._update_status()
         self._mark_active_mode_needs_update()
+        self._apply_first_line_indent()
+        self._schedule_spellcheck()
 
     def _convert_to_smart_quotes(self) -> None:
         start, end, text = self._get_text_range()
@@ -3239,6 +3251,8 @@ class EditorialApp:
 
         self._update_status()
         self._mark_active_mode_needs_update()
+        self._apply_first_line_indent()
+        self._schedule_spellcheck()
         self._find_next()
 
     def _replace_all(self) -> None:
@@ -3264,6 +3278,8 @@ class EditorialApp:
         self._find_index = "1.0"
         self._update_status()
         self._mark_active_mode_needs_update()
+        self._apply_first_line_indent()
+        self._schedule_spellcheck()
         messagebox.showinfo("Replace All", f"Replaced {count} occurrence(s).")
 
     def _get_active_pov_pronouns(self) -> list[str]:

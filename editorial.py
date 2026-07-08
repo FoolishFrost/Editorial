@@ -55,16 +55,7 @@ from filter_analyzer import (
     analyze_weak_modifiers,
 )
 
-APP_NAME = "Editorial"
-APP_VERSION = "1.2.4"
-COMPANY_NAME = "Foolish Designs"
-CREATOR_NAME = "John Bowden"
-SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
-GITHUB_REPO = "FoolishFrost/Editorial"
-WIKI_URL = "https://github.com/FoolishFrost/Editorial/wiki"
-RELEASES_URL = "https://github.com/FoolishFrost/Editorial/releases"
-LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-
+from editorial_export import collect_export_ranges, build_tagged_export, build_rtf_export
 
 def _extract_spellcheck_tokens(content: str) -> list[tuple[str, tuple[int, int]]]:
     tokens: list[tuple[str, tuple[int, int]]] = []
@@ -86,131 +77,59 @@ def _write_spellchecker_dictionary_file(payload: bytes, destination: str) -> str
         fh.write(gzip.decompress(payload))
     return destination_path
 
-
-# ---------------------------------------------------------------------------
-# Colour palette  (Catppuccin Mocha-inspired dark theme)
-# ---------------------------------------------------------------------------
-BG          = "#1e1e2e"   # base background
-BG_SURFACE  = "#181825"   # toolbar / panel background
-BG_OVERLAY  = "#313244"   # hover / selection overlay
-TEXT        = "#cdd6f4"   # primary text
-TEXT_SUBTLE = "#6c7086"   # muted labels
-ACCENT      = "#89b4fa"   # blue accent (cursor, scrollbar)
-
-# Filter highlight colours
-RED_FG    = "#f38ba8"
-RED_BG    = "#3d1520"
-GREEN_FG  = "#a6e3a1"
-GREEN_BG  = "#1a2e1e"
-PURPLE_FG = "#1e1e2e"
-PURPLE_BG = "#f9e2af"
-ORANGE_FG = "#f2cd96"
-ORANGE_BG = "#4a3320"
-BLUE_FG   = "#89b4fa"
-BLUE_BG   = "#1f2b40"
-WHITE_FG  = "#f5f5f5"
-WHITE_BG  = "#3a3a3a"
-FIND_BG   = "#45475a"
-
-PACING_SHORT_WORDS = 3
-PACING_AVERAGE_WORDS = 12
-PACING_LONG_WORDS = 19
-PACING_TAG_STYLES: tuple[tuple[str, str, str], ...] = (
-    ("pacing_cool_3", "#eaf5ff", "#14395f"),
-    ("pacing_cool_2", "#e3f6ff", "#1b4a73"),
-    ("pacing_cool_1", "#def7ff", "#255e83"),
-    ("pacing_neutral", "#deffe5", "#21482d"),
-    ("pacing_warm_1", "#fff1c9", "#61501f"),
-    ("pacing_warm_2", "#ffe0c6", "#6d341d"),
-    ("pacing_hot", "#ffe0e0", "#652126"),
-)
-PACING_EXPORT_LABELS = {
-    "pacing_cool_3": "VERY SHORT",
-    "pacing_cool_2": "SHORT",
-    "pacing_cool_1": "BRISK",
-    "pacing_neutral": "BALANCED",
-    "pacing_warm_1": "STRETCHED",
-    "pacing_warm_2": "LONG",
-    "pacing_hot": "VERY LONG",
-}
-
-POV_PRONOUN_MAP: dict[str, list[str]] = {
-    "First Person (I/We)": ["i", "we", "me", "us"],
-    "Third Person Male (He)": ["he", "him"],
-    "Third Person Female (She)": ["she", "her"],
-    "Third Person Plural (They)": ["they", "them"],
-    "All Pronouns (Broad Scan)": ["i", "we", "he", "she", "they", "me", "us", "him", "her", "them"],
-}
-
-EDITOR_MODE_OFF = "off"
-EDITOR_MODE_FILTER = "filter_words"
-EDITOR_MODE_WEAK = "weak_modifiers"
-EDITOR_MODE_PUNCT = "dialogue_punctuation"
-EDITOR_MODE_DTAG = "dialogue_tags"
-EDITOR_MODE_EMOTION = "emotion_catcher"
-EDITOR_MODE_ECHO = "echo_radar"
-EDITOR_MODE_PACING = "rhythm_pacing"
-EDITOR_MODE_CLICHE = "cliches"
-EDITOR_MODE_REDUNDANCY = "redundancies"
-EDITOR_MODE_PASSIVE = "passive_voice"
-EDITOR_MODE_ARCH = "sentence_architecture"
-
-EDITOR_MODES: list[tuple[str, str]] = [
-    ("Editor Off", EDITOR_MODE_OFF),
-    ("Filter Words", EDITOR_MODE_FILTER),
-    ("Weak Modifiers", EDITOR_MODE_WEAK),
-    ("Punctuation", EDITOR_MODE_PUNCT),
-    ("Dialogue Tags", EDITOR_MODE_DTAG),
-    ("Emotion Catcher", EDITOR_MODE_EMOTION),
-    ("Proximity Echo Radar", EDITOR_MODE_ECHO),
-    ("Rhythm & Pacing", EDITOR_MODE_PACING),
-    ("Cliches", EDITOR_MODE_CLICHE),
-    ("Redundancies", EDITOR_MODE_REDUNDANCY),
-    ("Passive Voice", EDITOR_MODE_PASSIVE),
-    ("Sentence Architecture", EDITOR_MODE_ARCH),
-]
-
-ARCH_TAG_STYLES: tuple[tuple[str, str, str, bool], ...] = (
-    # Normal tags
-    ("arch_subject_first",          "#253a52", "#c6e0ff", False),  # steel blue
-    ("arch_participial_launch",     "#4f3e1a", "#ffebaf", False),  # warm gold
-    ("arch_contextual_lead",        "#3c2a57", "#e3d1ff", False),  # soft amethyst
-    ("arch_echoing_hinge",          "#542817", "#ffd4c0", False),  # terracotta
-    ("arch_simultaneous_setup",     "#23422a", "#d3ffd9", False),  # sage green
-    ("arch_fragment",               "#303040", "#c0c0d8", False),  # slate grey
-
-    # Stacked tags (intensified and bordered)
-    ("arch_subject_first_stacked",          "#355375", "#e6f2ff", True),
-    ("arch_participial_launch_stacked",     "#6e5624", "#fff3d1", True),
-    ("arch_contextual_lead_stacked",        "#553c7a", "#f0e6ff", True),
-    ("arch_echoing_hinge_stacked",          "#753820", "#ffe7db", True),
-    ("arch_simultaneous_setup_stacked",     "#32613d", "#ecffef", True),
-    ("arch_fragment_stacked",               "#484860", "#e0e0f0", True),
+from editorial_config import (
+    APP_NAME,
+    APP_VERSION,
+    COMPANY_NAME,
+    CREATOR_NAME,
+    SUPPORT_EMAIL,
+    GITHUB_REPO,
+    WIKI_URL,
+    RELEASES_URL,
+    LATEST_RELEASE_API,
+    BG,
+    BG_SURFACE,
+    BG_OVERLAY,
+    TEXT,
+    TEXT_SUBTLE,
+    ACCENT,
+    RED_FG,
+    RED_BG,
+    GREEN_FG,
+    GREEN_BG,
+    PURPLE_FG,
+    PURPLE_BG,
+    ORANGE_FG,
+    ORANGE_BG,
+    BLUE_FG,
+    BLUE_BG,
+    WHITE_FG,
+    WHITE_BG,
+    FIND_BG,
+    PACING_SHORT_WORDS,
+    PACING_AVERAGE_WORDS,
+    PACING_LONG_WORDS,
+    PACING_TAG_STYLES,
+    PACING_EXPORT_LABELS,
+    POV_PRONOUN_MAP,
+    EDITOR_MODE_OFF,
+    EDITOR_MODE_FILTER,
+    EDITOR_MODE_WEAK,
+    EDITOR_MODE_PUNCT,
+    EDITOR_MODE_DTAG,
+    EDITOR_MODE_EMOTION,
+    EDITOR_MODE_ECHO,
+    EDITOR_MODE_PACING,
+    EDITOR_MODE_CLICHE,
+    EDITOR_MODE_REDUNDANCY,
+    EDITOR_MODE_PASSIVE,
+    EDITOR_MODE_ARCH,
+    EDITOR_MODES,
+    ARCH_TAG_STYLES,
+    ARCH_EXPORT_LABELS,
+    ARCH_FRIENDLY_LABELS,
 )
 
-ARCH_EXPORT_LABELS: dict[str, str] = {
-    "arch_subject_first":          "SUBJECT_FIRST",
-    "arch_subject_first_stacked":  "SUBJECT_FIRST_STACKED",
-    "arch_participial_launch":     "PARTICIPIAL_LAUNCH",
-    "arch_participial_launch_stacked": "PARTICIPIAL_LAUNCH_STACKED",
-    "arch_contextual_lead":        "CONTEXTUAL_LEAD",
-    "arch_contextual_lead_stacked": "CONTEXTUAL_LEAD_STACKED",
-    "arch_echoing_hinge":          "ECHOING_HINGE",
-    "arch_echoing_hinge_stacked":  "ECHOING_HINGE_STACKED",
-    "arch_simultaneous_setup":     "SIMULTANEOUS_SETUP",
-    "arch_simultaneous_setup_stacked": "SIMULTANEOUS_SETUP_STACKED",
-    "arch_fragment":               "FRAGMENT",
-    "arch_fragment_stacked":       "FRAGMENT_STACKED",
-}
-
-ARCH_FRIENDLY_LABELS: dict[str, str] = {
-    "arch_subject_first": "Subject-First",
-    "arch_participial_launch": "Participial Launch",
-    "arch_contextual_lead": "Contextual Lead",
-    "arch_echoing_hinge": "Echoing Hinge",
-    "arch_simultaneous_setup": "Simultaneous",
-    "arch_fragment": "Fragment",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -1702,8 +1621,8 @@ class EditorialApp:
         mode = self._active_editor_mode
 
         def task() -> None:
-            ranges = self._collect_export_ranges(mode, text, active_pov, pov_names)
-            rtf = self._build_rtf_export(text, ranges)
+            ranges = collect_export_ranges(self, mode, text, active_pov, pov_names)
+            rtf = build_rtf_export(text, ranges)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(rtf)
 
@@ -1729,7 +1648,7 @@ class EditorialApp:
         mode = self._active_editor_mode
 
         def task() -> None:
-            ranges = self._collect_export_ranges(mode, text, active_pov, pov_names)
+            ranges = collect_export_ranges(self, mode, text, active_pov, pov_names)
             label_map: dict[str, str] | None = None
             if mode == EDITOR_MODE_PUNCT:
                 label_map = {"quote": "QUOTE", "dash": "DASH", "ellipsis": "ELLIPSIS", "loud": "LOUD"}
@@ -1749,7 +1668,7 @@ class EditorialApp:
                 label_map = {"passive_voice_hit": "PASSIVE_VOICE"}
             elif mode == EDITOR_MODE_ARCH:
                 label_map = dict(ARCH_EXPORT_LABELS)
-            tagged = self._build_tagged_export(text, ranges, label_map)
+            tagged = build_tagged_export(text, ranges, label_map)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(tagged)
 
@@ -1897,301 +1816,11 @@ class EditorialApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _collect_export_ranges(
-        self,
-        mode: str,
-        text: str,
-        active_pov: list[str],
-        pov_names: set[str] | None = None,
-    ) -> list[tuple[int, int, str]]:
-        if mode == EDITOR_MODE_EMOTION:
-            if not self._emotion_update_needed and self._emotion_hits:
-                return sorted([(ws, we, "emotion") for ws, we in self._emotion_hits], key=lambda x: x[0])
-            return sorted(
-                [(ws, we, "emotion") for ws, we, _cls in analyze_emotion_words(text)],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_ECHO:
-            if not self._echo_update_needed and self._echo_hits:
-                return sorted([(ws, we, "echo") for ws, we in self._echo_hits], key=lambda x: x[0])
-            token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
-            filler_words = {
-                "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
-                "well", "just", "really", "very", "quite", "actually",
-                "basically", "literally", "perhaps", "maybe",
-            }
-            blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
-            blocked_words.update(filler_words)
-            tokens: list[tuple[str, int, int]] = []
-            for m in token_re.finditer(text):
-                word = m.group(0).lower().replace("\u2019", "'")
-                clean = word.replace("'", "")
-                if not clean.isalpha() or len(clean) < 3 or word in blocked_words:
-                    continue
-                tokens.append((word, m.start(), m.end()))
-            last_seen: dict[str, int] = {}
-            flagged: set[int] = set()
-            for idx, (word, _start, _end) in enumerate(tokens):
-                prev = last_seen.get(word)
-                if prev is not None and (idx - prev) <= 300:
-                    flagged.add(prev)
-                    flagged.add(idx)
-                last_seen[word] = idx
-            return sorted(
-                [(tokens[idx][1], tokens[idx][2], "echo") for idx in flagged],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_DTAG:
-            if not self._dialogue_tag_update_needed and self._dialogue_tag_hits:
-                return sorted([(ws, we, "dialogue_tag") for ws, we in self._dialogue_tag_hits], key=lambda x: x[0])
-            return sorted(
-                [(ws, we, "dialogue_tag") for ws, we, _cls in analyze_dialogue_tags(text)],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_PACING:
-            ranges: list[tuple[int, int, str]] = []
-            for ws, we, heat, _wc in analyze_sentence_pacing(
-                text,
-                short_max_words=self._pacing_short_words,
-                average_words=self._pacing_average_words,
-                long_min_words=self._pacing_long_words,
-            ):
-                ranges.append((ws, we, self._pacing_tag_from_heat(heat)))
-            return sorted(ranges, key=lambda x: x[0])
-        if mode == EDITOR_MODE_CLICHE:
-            if not getattr(self, "_cliche_update_needed", False) and getattr(self, "_cliche_hits", None):
-                return sorted([(ws, we, "cliche_hit") for ws, we in self._cliche_hits], key=lambda x: x[0])
-            from filter_analyzer import analyze_cliches
-            return sorted(
-                [(ws, we, "cliche_hit") for ws, we, _cls in analyze_cliches(text)],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_REDUNDANCY:
-            if not getattr(self, "_redundancy_update_needed", False) and getattr(self, "_redundancy_hits", None):
-                return sorted([(ws, we, "redundancy_hit") for ws, we in self._redundancy_hits], key=lambda x: x[0])
-            from filter_analyzer import analyze_redundancies
-            return sorted(
-                [(ws, we, "redundancy_hit") for ws, we, _cls in analyze_redundancies(text)],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_PASSIVE:
-            if not getattr(self, "_passive_voice_update_needed", False) and getattr(self, "_passive_voice_hits", None):
-                return sorted([(ws, we, "passive_voice_hit") for ws, we in self._passive_voice_hits], key=lambda x: x[0])
-            from filter_analyzer import analyze_passive_voice
-            return sorted(
-                [(ws, we, "passive_voice_hit") for ws, we, _cls in analyze_passive_voice(text)],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_WEAK:
-            if not self._weak_update_needed and self._weak_mod_hits:
-                return sorted(
-                    [(ws, we, "orange") for ws, we in self._weak_mod_hits],
-                    key=lambda x: x[0],
-                )
-            hits_raw = analyze_weak_modifiers(text)
-            return sorted(
-                [(ws, we, "orange") for ws, we, _cls in hits_raw],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_PUNCT:
-            ranges: list[tuple[int, int, str]] = []
-            if not self._punct_update_needed and any(self._punct_hits.values()):
-                for cls, hits in self._punct_hits.items():
-                    for ws, we in hits:
-                        ranges.append((ws, we, cls))
-                return sorted(ranges, key=lambda x: x[0])
-            for ws, we, cls in analyze_dialogue_mechanics(text):
-                ranges.append((ws, we, cls))
-            return sorted(ranges, key=lambda x: x[0])
-        if mode == EDITOR_MODE_FILTER:
-            if not self._filter_update_needed and any(self._filter_hits.values()):
-                ranges = []
-                for level in ("red", "purple"):
-                    for ws, we in self._filter_hits.get(level, []):
-                        ranges.append((ws, we, level))
-                return sorted(ranges, key=lambda x: x[0])
-            hits_raw = analyze_filter_words(
-                text,
-                pov_character_names=pov_names,
-                active_pov_pronouns=active_pov,
-            )
-            return sorted(
-                [(ws, we, "red" if cls == "yellow" else cls) for ws, we, cls in hits_raw],
-                key=lambda x: x[0],
-            )
-        if mode == EDITOR_MODE_ARCH:
-            if not getattr(self, "_arch_update_needed", False) and getattr(self, "_arch_hits", None):
-                return sorted(self._arch_hits, key=lambda x: x[0])
-            if getattr(self, "_arch_ignore_dialogue_var", None) and self._arch_ignore_dialogue_var.get():
-                text = self._mask_dialogue_text(text)
-            from filter_analyzer import analyze_sentence_architecture
-            return sorted(analyze_sentence_architecture(text), key=lambda x: x[0])
-        return []
-
-    def _build_tagged_export(
-        self,
-        text: str,
-        ranges: list[tuple[int, int, str]],
-        label_map: dict[str, str] | None = None,
-    ) -> str:
-        if not ranges:
-            return text
-
-        out: list[str] = []
-        pos = 0
-
-        for start, end, level in ranges:
-            if start < pos:
-                continue
-            out.append(text[pos:start])
-            word = text[start:end]
-            if label_map and level in label_map:
-                out.append(f"[{label_map[level]}:{word}]")
-            else:
-                out.append(f"[{word}]")
-            pos = end
-
-        out.append(text[pos:])
-        return "".join(out)
-
-    def _rtf_escape(self, s: str) -> str:
-        s = s.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
-        return s.replace("\n", r"\par " + "\n")
-
     def _text_char_length(self) -> int:
         try:
             return int(self.text.count("1.0", "end-1c", "chars")[0])
         except Exception:
             return len(self.text.get("1.0", "end-1c"))
-
-    def _build_rtf_export(self, text: str, ranges: list[tuple[int, int, str]]) -> str:
-        # Color table entries mirror the exact hex pairs used by in-app text tags.
-        # Index 0 is the implicit "auto" entry (before first semicolon).
-        # cf = foreground index, highlight = background index — same values as app constants.
-        #
-        # Color table:
-        #  1 RED_FG   #f38ba8  \red243\green139\blue168
-        #  2 RED_BG   #3d1520  \red61\green21\blue32
-        #  3 ORANGE_FG #f2cd96 \red242\green205\blue150
-        #  4 ORANGE_BG #4a3320 \red74\green51\blue32
-        #  5 PURPLE_FG #1e1e2e \red30\green30\blue46
-        #  6 PURPLE_BG #f9e2af \red249\green226\blue175
-        #  7 BLUE_FG  #89b4fa  \red137\green180\blue250
-        #  8 BLUE_BG  #1f2b40  \red31\green43\blue64
-        #  9 WHITE_FG #f5f5f5  \red245\green245\blue245
-        # 10 WHITE_BG #3a3a3a  \red58\green58\blue58
-        # 11 GREEN_FG #a6e3a1  \red166\green227\blue161
-        # 12 GREEN_BG #1a2e1e  \red26\green46\blue30
-        level_colors: dict[str, tuple[int, int, bool]] = {
-            "red":      (1, 2),   # filter words:     RED_FG on RED_BG
-            "orange":   (3, 4),   # weak modifiers:   ORANGE_FG on ORANGE_BG
-            "quote":    (5, 6),   # quote issues:     PURPLE_FG on PURPLE_BG
-            "dash":     (7, 8),   # dashes:           BLUE_FG on BLUE_BG
-            "ellipsis": (9, 10),  # ellipsis:         WHITE_FG on WHITE_BG
-            "loud":     (1, 2),   # loud punctuation: RED_FG on RED_BG
-            "purple":   (5, 6),   # legacy quote:     PURPLE_FG on PURPLE_BG
-            "emotion":  (1, 2),   # emotion words:    RED_FG on RED_BG
-            "echo":     (7, 8),   # echo radar:       BLUE_FG on BLUE_BG
-            "dialogue_tag": (3, 4),
-            "typography": (7, 8), # typography scan:  BLUE_FG on BLUE_BG
-            "pacing_cool_3": (7, 8),
-            "pacing_cool_2": (7, 8),
-            "pacing_cool_1": (7, 8),
-            "pacing_neutral": (11, 12),
-            "pacing_warm_1": (3, 4),
-            "pacing_warm_2": (3, 4),
-            "pacing_hot": (1, 2),
-            "cliche_hit": (13, 14),       # #80cbc4 on #004d40
-            "redundancy_hit": (15, 16),   # #ffee58 on #4d4d00
-            "passive_voice_hit": (17, 18),# #f06292 on #4a0024
-            # Arch: Normal tags
-            "arch_subject_first":          (19, 20),   # #a8c8f8 on #1e2d3e
-            "arch_participial_launch":     (21, 22),   # #f9d87a on #382d10
-            "arch_contextual_lead":        (23, 24),   # #c4a8f8 on #291e3b
-            "arch_echoing_hinge":          (25, 26),   # #f4a07a on #3c1e10
-            "arch_simultaneous_setup":     (27, 28),   # #a6e3a1 on #1a2e1e
-            "arch_fragment":               (29, 30),   # #8a8aaa on #20202c
-            # Arch: Stacked tags (with border/intensified colors)
-            "arch_subject_first_stacked":          (31, 32),   # #c0dbff on #2d4460
-            "arch_participial_launch_stacked":     (33, 34),   # #ffe6a3 on #544318
-            "arch_contextual_lead_stacked":        (35, 36),   # #dbccff on #3f2e5a
-            "arch_echoing_hinge_stacked":          (37, 38),   # #ffc0a3 on #5a2d18
-            "arch_simultaneous_setup_stacked":     (39, 40),   # #c2ffd2 on #284a32
-            "arch_fragment_stacked":               (41, 42),   # #b4b4d0 on #303042
-        }
-
-        chunks: list[str] = []
-        pos = 0
-        for start, end, level in ranges:
-            if start < pos:
-                continue
-            if start > pos:
-                chunks.append(self._rtf_escape(text[pos:start]))
-            word = self._rtf_escape(text[start:end])
-            cf, highlight = level_colors.get(level, (1, 2))
-            underline = level in {"quote", "dash", "ellipsis", "loud", "echo", "typography", "dialogue_tag"}
-            is_arch_stacked = level.endswith("_stacked")
-            prefix = r"{\cf" + str(cf) + r"\highlight" + str(highlight) + " "
-            if underline or is_arch_stacked:
-                prefix += r"\ul "
-            suffix = r"\ul0\highlight0\cf0 }" if (underline or is_arch_stacked) else r"\highlight0\cf0 }"
-            chunks.append(prefix + word + suffix)
-            pos = end
-        chunks.append(self._rtf_escape(text[pos:]))
-
-        color_table = (
-            r"{\colortbl ;"
-            r"\red243\green139\blue168;"   #  1 RED_FG   #f38ba8
-            r"\red61\green21\blue32;"      #  2 RED_BG   #3d1520
-            r"\red242\green205\blue150;"   #  3 ORANGE_FG #f2cd96
-            r"\red74\green51\blue32;"      #  4 ORANGE_BG #4a3320
-            r"\red30\green30\blue46;"      #  5 PURPLE_FG #1e1e2e
-            r"\red249\green226\blue175;"   #  6 PURPLE_BG #f9e2af
-            r"\red137\green180\blue250;"   #  7 BLUE_FG  #89b4fa
-            r"\red31\green43\blue64;"      #  8 BLUE_BG  #1f2b40
-            r"\red245\green245\blue245;"   #  9 WHITE_FG #f5f5f5
-            r"\red58\green58\blue58;"      # 10 WHITE_BG #3a3a3a
-            r"\red166\green227\blue161;"   # 11 GREEN_FG #a6e3a1
-            r"\red26\green46\blue30;"      # 12 GREEN_BG #1a2e1e
-            r"\red128\green203\blue196;"   # 13 Cliche FG #80cbc4
-            r"\red0\green77\blue64;"       # 14 Cliche BG #004d40
-            r"\red255\green238\blue88;"    # 15 Redundancy FG #ffee58
-            r"\red77\green77\blue0;"       # 16 Redundancy BG #4d4d00
-            r"\red240\green98\blue146;"    # 17 Passive FG #f06292
-            r"\red74\green0\blue36;"       # 18 Passive BG #4a0024
-            r"\red198\green224\blue255;"   # 19 Arch Subject First FG  #c6e0ff
-            r"\red37\green58\blue82;"      # 20 Arch Subject First BG  #253a52
-            r"\red255\green235\blue175;"   # 21 Arch Participial Launch FG #ffebaf
-            r"\red79\green62\blue26;"      # 22 Arch Participial Launch BG #4f3e1a
-            r"\red227\green209\blue255;"   # 23 Arch Contextual Lead FG  #e3d1ff
-            r"\red60\green42\blue87;"      # 24 Arch Contextual Lead BG  #3c2a57
-            r"\red255\green212\blue192;"   # 25 Arch Echoing Hinge FG #ffd4c0
-            r"\red84\green40\blue23;"      # 26 Arch Echoing Hinge BG #542817
-            r"\red211\green255\blue217;"   # 27 Arch Simultaneous Setup FG #d3ffd9
-            r"\red35\green66\blue42;"      # 28 Arch Simultaneous Setup BG #23422a
-            r"\red192\green192\blue216;"   # 29 Arch Fragment FG #c0c0d8
-            r"\red48\green48\blue64;"      # 30 Arch Fragment BG #303040
-            r"\red230\green242\blue255;"   # 31 Arch Subject First Stacked FG #e6f2ff
-            r"\red53\green83\blue117;"     # 32 Arch Subject First Stacked BG #355375
-            r"\red255\green243\blue209;"   # 33 Arch Participial Launch Stacked FG #fff3d1
-            r"\red110\green86\blue36;"     # 34 Arch Participial Launch Stacked BG #6e5624
-            r"\red240\green230\blue255;"   # 35 Arch Contextual Lead Stacked FG #f0e6ff
-            r"\red85\green60\blue122;"     # 36 Arch Contextual Lead Stacked BG #553c7a
-            r"\red255\green231\blue219;"   # 37 Arch Echoing Hinge Stacked FG #ffe7db
-            r"\red117\green56\blue32;"     # 38 Arch Echoing Hinge Stacked BG #753820
-            r"\red236\green255\blue239;"   # 39 Arch Simultaneous Setup Stacked FG #ecffef
-            r"\red50\green97\blue61;"      # 40 Arch Simultaneous Setup Stacked BG #32613d
-            r"\red224\green224\blue240;"   # 41 Arch Fragment Stacked FG #e0e0f0
-            r"\red72\green72\blue96;"      # 42 Arch Fragment Stacked BG #484860
-            r"}"
-        )
-        header = (
-            r"{\rtf1\ansi\deff0"
-            r"{\fonttbl{\f0 Consolas;}}"
-            + color_table +
-            r"\viewkind4\uc1\pard\f0\fs22 "
-        )
-        return header + "".join(chunks) + r"}"
 
     def _write(self, path: str) -> None:
         try:

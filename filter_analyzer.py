@@ -903,7 +903,7 @@ def print_report_for_file(
 
 
 def _classify_span(span) -> str | None:
-    tokens = [t for t in span if not t.is_punct]
+    tokens = [t for t in span if not t.is_punct and not t.is_space]
     if not tokens:
         return None
 
@@ -970,7 +970,7 @@ def _classify_span(span) -> str | None:
         allowed_before = True
         for t in span:
             if t.i < subj.i:
-                if t.is_punct:
+                if t.is_punct or t.is_space:
                     continue
                 if t.pos_ in ("NOUN", "PROPN", "VERB", "ADP", "SCONJ"):
                     allowed_before = False

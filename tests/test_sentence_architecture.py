@@ -161,6 +161,17 @@ class TestDialogueMasking:
         assert masked == 'She said, "           \nHe stayed.'
         root.destroy()
 
+    def test_ignore_dialogue_integration(self):
+        from filter_analyzer import analyze_sentence_architecture
+        # Under ignore dialogue, a sentence like "What?" becomes "     "
+        # Verify that analyzing a masked dialogue string returns no results.
+        hits = analyze_sentence_architecture('"     "')
+        assert hits == []
+
+        hits_multiline = analyze_sentence_architecture('"                             "\n"                   "')
+        assert hits_multiline == []
+
+
 
 class TestLegendInteractions:
     def test_toggle_and_reset_styles(self):

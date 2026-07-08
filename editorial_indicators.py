@@ -193,18 +193,18 @@ class IndicatorSubsystem:
                 # Sentence Architecture: draw a positional colour strip —
                 # each clause gets a coloured row at its actual document position.
                 _ARCH_SIDEBAR_COLOURS: dict[str, str] = {
-                    "arch_subject_first":          "#a8c8f8",
-                    "arch_subject_first_stacked":  "#c0dbff",
-                    "arch_participial_launch":     "#f9d87a",
-                    "arch_participial_launch_stacked": "#ffe6a3",
-                    "arch_contextual_lead":        "#c4a8f8",
-                    "arch_contextual_lead_stacked": "#dbccff",
-                    "arch_echoing_hinge":          "#f4a07a",
-                    "arch_echoing_hinge_stacked":  "#ffc0a3",
-                    "arch_simultaneous_setup":     "#a6e3a1",
-                    "arch_simultaneous_setup_stacked": "#c2ffd2",
-                    "arch_fragment":               "#8a8aaa",
-                    "arch_fragment_stacked":       "#b4b4d0",
+                    "arch_subject_first":          "#c6e0ff",
+                    "arch_subject_first_stacked":  "#e6f2ff",
+                    "arch_participial_launch":     "#ffebaf",
+                    "arch_participial_launch_stacked": "#fff3d1",
+                    "arch_contextual_lead":        "#e3d1ff",
+                    "arch_contextual_lead_stacked": "#f0e6ff",
+                    "arch_echoing_hinge":          "#ffd4c0",
+                    "arch_echoing_hinge_stacked":  "#ffe7db",
+                    "arch_simultaneous_setup":     "#d3ffd9",
+                    "arch_simultaneous_setup_stacked": "#ecffef",
+                    "arch_fragment":               "#c0c0d8",
+                    "arch_fragment_stacked":       "#e0e0f0",
                 }
                 arch_fracs = getattr(self.app, "_arch_hit_fracs", [])
                 total_clauses = max(1, len(arch_fracs))

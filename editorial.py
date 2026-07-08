@@ -203,6 +203,15 @@ ARCH_EXPORT_LABELS: dict[str, str] = {
     "arch_fragment_stacked":       "FRAGMENT_STACKED",
 }
 
+ARCH_FRIENDLY_LABELS: dict[str, str] = {
+    "arch_subject_first": "Subject-First",
+    "arch_participial_launch": "Participial Launch",
+    "arch_contextual_lead": "Contextual Lead",
+    "arch_echoing_hinge": "Echoing Hinge",
+    "arch_simultaneous_setup": "Simultaneous",
+    "arch_fragment": "Fragment",
+}
+
 
 # ---------------------------------------------------------------------------
 # Application
@@ -242,6 +251,15 @@ class EditorialApp:
         self._pacing_active: bool = False
         self._arch_active: bool = False
         self._arch_update_needed: bool = False
+        self._arch_visible = {
+            "arch_subject_first": True,
+            "arch_participial_launch": True,
+            "arch_contextual_lead": True,
+            "arch_echoing_hinge": True,
+            "arch_simultaneous_setup": True,
+            "arch_fragment": True,
+        }
+        self._arch_counts: dict[str, int] = {}
         self._active_editor_mode: str = EDITOR_MODE_OFF
         self._editor_mode_var = tk.StringVar(value=EDITOR_MODE_OFF)
         self._editor_mode_label_var = tk.StringVar(value="Editor Off")
@@ -2380,6 +2398,59 @@ class EditorialApp:
         self._dialogue_tag_hits = []
         self._dialogue_tag_hit_fracs = []
 
+    def _reset_arch_tag_styles(self) -> None:
+        self._arch_visible = {
+            "arch_subject_first": True,
+            "arch_participial_launch": True,
+            "arch_contextual_lead": True,
+            "arch_echoing_hinge": True,
+            "arch_simultaneous_setup": True,
+            "arch_fragment": True,
+        }
+        for tag_tuple in ARCH_TAG_STYLES:
+            tag_name, bg, fg = tag_tuple[:3]
+            self.text.tag_configure(
+                tag_name,
+                background=bg,
+                foreground=fg,
+                relief="flat",
+                borderwidth=0,
+            )
+            if len(tag_tuple) > 3 and tag_tuple[3]:
+                self.text.tag_configure(
+                    tag_name,
+                    relief="solid",
+                    borderwidth=1,
+                )
+
+    def _toggle_arch_tag(self, base_tag: str) -> None:
+        self._arch_visible[base_tag] = not self._arch_visible[base_tag]
+        
+        # Reconfigure tag colors in Tkinter text widget
+        # Find colors from ARCH_TAG_STYLES
+        normal_bg = ""
+        normal_fg = ""
+        stacked_bg = ""
+        stacked_fg = ""
+        
+        for name, bg, fg, stacked in ARCH_TAG_STYLES:
+            if name == base_tag:
+                normal_bg = bg
+                normal_fg = fg
+            elif name == base_tag + "_stacked":
+                stacked_bg = bg
+                stacked_fg = fg
+                
+        is_visible = self._arch_visible[base_tag]
+        if is_visible:
+            self.text.tag_configure(base_tag, background=normal_bg, foreground=normal_fg, relief="flat", borderwidth=0)
+            self.text.tag_configure(base_tag + "_stacked", background=stacked_bg, foreground=stacked_fg, relief="solid", borderwidth=1)
+        else:
+            self.text.tag_configure(base_tag, background="", foreground="", relief="flat", borderwidth=0)
+            self.text.tag_configure(base_tag + "_stacked", background="", foreground="", relief="flat", borderwidth=0)
+            
+        self._update_status_legend()
+
     def _clear_arch_highlights(self) -> None:
         for tag_tuple in ARCH_TAG_STYLES:
             self.text.tag_remove(tag_tuple[0], "1.0", tk.END)
@@ -2387,6 +2458,9 @@ class EditorialApp:
         self._arch_hit_fracs = []
 
     def _run_arch_mode(self) -> None:
+        self._reset_arch_tag_styles()
+        self._arch_counts = {}
+
         def analyze_worker(content: str, progress_cb):
             if not content.strip():
                 progress_cb(100)
@@ -2444,18 +2518,9 @@ class EditorialApp:
                         base_tag = tag.replace("_stacked", "")
                         counts[base_tag] = counts.get(base_tag, 0) + 1
 
-                    friendly_labels = {
-                        "arch_subject_first": "Subject-First",
-                        "arch_participial_launch": "Participial Launch",
-                        "arch_contextual_lead": "Contextual Lead",
-                        "arch_echoing_hinge": "Echoing Hinge",
-                        "arch_simultaneous_setup": "Simultaneous",
-                    }
-                    summary_parts = [
-                        f"{friendly_labels.get(t, t)}: {n}"
-                        for t, n in sorted(counts.items())
-                    ]
-                    done(f"Sentence Architecture - {', '.join(summary_parts)}" if summary_parts else "Sentence Architecture")
+                    self._arch_counts = counts
+                    done("Sentence Architecture")
+                    self._update_status_legend()
 
             run_chunk()
 
@@ -4024,14 +4089,73 @@ class EditorialApp:
             EDITOR_MODE_CLICHE: [("#80cbc4", "Cliche")],
             EDITOR_MODE_REDUNDANCY: [("#ffee58", "Redundancy")],
             EDITOR_MODE_PASSIVE: [("#f06292", "Passive Voice")],
-            EDITOR_MODE_ARCH: [
-                ("#a8c8f8", "Subject-First"),
-                ("#f9d87a", "Participial Launch"),
-                ("#c4a8f8", "Contextual Lead"),
-                ("#f4a07a", "Echoing Hinge"),
-                ("#a6e3a1", "Simultaneous"),
-                ("#8a8aaa", "Fragment"),
+        }
+        if self._active_editor_mode == EDITOR_MODE_ARCH:
+            items = [
+                ("arch_subject_first",          "#253a52", "#c6e0ff"),
+                ("arch_participial_launch",     "#4f3e1a", "#ffebaf"),
+                ("arch_contextual_lead",        "#3c2a57", "#e3d1ff"),
+                ("arch_echoing_hinge",          "#542817", "#ffd4c0"),
+                ("arch_simultaneous_setup",     "#23422a", "#d3ffd9"),
+                ("arch_fragment",               "#303040", "#c0c0d8"),
+            ]
+            tk.Label(
+                self._legend_frame,
+                text="Key:",
+                bg="#11111b",
+                fg=TEXT_SUBTLE,
+                font=("Segoe UI", 9),
+                padx=4,
+            ).pack(side=tk.LEFT)
+
+            for base_tag, default_bg, default_fg in items:
+                friendly = ARCH_FRIENDLY_LABELS.get(base_tag, base_tag)
+                count = self._arch_counts.get(base_tag, 0)
+                is_visible = self._arch_visible.get(base_tag, True)
+                
+                if is_visible:
+                    bg_color = default_bg
+                    fg_color = default_fg
+                else:
+                    bg_color = "#313244"
+                    fg_color = "#7f849c"
+                
+                lbl = tk.Label(
+                    self._legend_frame,
+                    text=f"  {friendly} ({count})  ",
+                    bg=bg_color,
+                    fg=fg_color,
+                    font=("Segoe UI", 8, "bold"),
+                    padx=4,
+                    pady=1,
+                    cursor="hand2",
+                    relief="solid",
+                    borderwidth=1,
+                )
+                lbl.pack(side=tk.LEFT, padx=(4, 0))
+                lbl.bind("<Button-1>", lambda event, tag=base_tag: self._toggle_arch_tag(tag))
+            return
+
+        legend_map = {
+            EDITOR_MODE_FILTER: [(RED_FG, "Filter Words")],
+            EDITOR_MODE_WEAK: [(ORANGE_FG, "Weak / -ly")],
+            EDITOR_MODE_PUNCT: [
+                (PURPLE_BG, "Quote"),
+                (BLUE_FG, "Dash"),
+                (WHITE_FG, "Ellipsis"),
+                (RED_FG, "Loud"),
             ],
+            EDITOR_MODE_DTAG: [(ORANGE_FG, "Tag Lint")],
+            EDITOR_MODE_EMOTION: [(RED_FG, "Emotion Word")],
+            EDITOR_MODE_ECHO: [(ACCENT, "Echo Repeat")],
+            EDITOR_MODE_PACING: [
+                ("#4ea4ff", f"Short (<= {self._pacing_short_words})"),
+                (GREEN_FG, f"Balanced (~{self._pacing_average_words})"),
+                (RED_FG, f"Long (>= {self._pacing_long_words})"),
+            ],
+            EDITOR_MODE_CLICHE: [("#80cbc4", "Cliche")],
+            EDITOR_MODE_REDUNDANCY: [("#ffee58", "Redundancy")],
+            EDITOR_MODE_PASSIVE: [("#f06292", "Passive Voice")],
         }
 
         items = legend_map.get(self._active_editor_mode, [])

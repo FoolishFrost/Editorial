@@ -160,3 +160,42 @@ class TestDialogueMasking:
         masked = app._mask_dialogue_text(text)
         assert masked == 'She said, "           \nHe stayed.'
         root.destroy()
+
+
+class TestLegendInteractions:
+    def test_toggle_and_reset_styles(self):
+        import tkinter as tk
+        try:
+            root = tk.Tk()
+        except Exception:
+            pytest.skip("Tkinter is not available in this environment")
+
+        from editorial import EditorialApp
+        app = EditorialApp(root)
+
+        # Verify initial states
+        assert app._arch_visible["arch_subject_first"] is True
+        
+        # Test toggling OFF
+        app._toggle_arch_tag("arch_subject_first")
+        assert app._arch_visible["arch_subject_first"] is False
+        
+        # Verify tag is styled with empty/flat config
+        config = app.text.tag_configure("arch_subject_first")
+        assert config["background"][-1] == "" or config["background"][-1] == "None"
+        
+        # Test toggling back ON
+        app._toggle_arch_tag("arch_subject_first")
+        assert app._arch_visible["arch_subject_first"] is True
+        
+        # Verify background colors restored
+        config = app.text.tag_configure("arch_subject_first")
+        assert config["background"][-1] == "#253a52"
+        
+        # Test resetting
+        app._arch_visible["arch_subject_first"] = False
+        app._reset_arch_tag_styles()
+        assert app._arch_visible["arch_subject_first"] is True
+        
+        root.destroy()
+

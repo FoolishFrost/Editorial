@@ -176,14 +176,16 @@ ARCH_TAG_STYLES: tuple[tuple[str, str, str, bool], ...] = (
     ("arch_participial_launch",     "#382d10", "#f9d87a", False),  # warm amber
     ("arch_contextual_lead",        "#291e3b", "#c4a8f8", False),  # soft purple
     ("arch_echoing_hinge",          "#3c1e10", "#f4a07a", False),  # coral
-    ("arch_simultaneous_setup",     "#20202c", "#8a8aaa", False),  # pale grey
+    ("arch_simultaneous_setup",     "#1a2e1e", "#a6e3a1", False),  # sage green
+    ("arch_fragment",               "#20202c", "#8a8aaa", False),  # pale grey
 
     # Stacked tags (intensified and bordered)
     ("arch_subject_first_stacked",          "#2d4460", "#c0dbff", True),
     ("arch_participial_launch_stacked",     "#544318", "#ffe6a3", True),
     ("arch_contextual_lead_stacked",        "#3f2e5a", "#dbccff", True),
     ("arch_echoing_hinge_stacked",          "#5a2d18", "#ffc0a3", True),
-    ("arch_simultaneous_setup_stacked",     "#303042", "#b4b4d0", True),
+    ("arch_simultaneous_setup_stacked",     "#284a32", "#c2ffd2", True),
+    ("arch_fragment_stacked",               "#303042", "#b4b4d0", True),
 )
 
 ARCH_EXPORT_LABELS: dict[str, str] = {
@@ -197,6 +199,8 @@ ARCH_EXPORT_LABELS: dict[str, str] = {
     "arch_echoing_hinge_stacked":  "ECHOING_HINGE_STACKED",
     "arch_simultaneous_setup":     "SIMULTANEOUS_SETUP",
     "arch_simultaneous_setup_stacked": "SIMULTANEOUS_SETUP_STACKED",
+    "arch_fragment":               "FRAGMENT",
+    "arch_fragment_stacked":       "FRAGMENT_STACKED",
 }
 
 
@@ -2087,13 +2091,15 @@ class EditorialApp:
             "arch_participial_launch":     (21, 22),   # #f9d87a on #382d10
             "arch_contextual_lead":        (23, 24),   # #c4a8f8 on #291e3b
             "arch_echoing_hinge":          (25, 26),   # #f4a07a on #3c1e10
-            "arch_simultaneous_setup":     (27, 28),   # #8a8aaa on #20202c
+            "arch_simultaneous_setup":     (27, 28),   # #a6e3a1 on #1a2e1e
+            "arch_fragment":               (29, 30),   # #8a8aaa on #20202c
             # Arch: Stacked tags (with border/intensified colors)
-            "arch_subject_first_stacked":          (29, 30),   # #c0dbff on #2d4460
-            "arch_participial_launch_stacked":     (31, 32),   # #ffe6a3 on #544318
-            "arch_contextual_lead_stacked":        (33, 34),   # #dbccff on #3f2e5a
-            "arch_echoing_hinge_stacked":          (35, 36),   # #ffc0a3 on #5a2d18
-            "arch_simultaneous_setup_stacked":     (37, 38),   # #b4b4d0 on #303042
+            "arch_subject_first_stacked":          (31, 32),   # #c0dbff on #2d4460
+            "arch_participial_launch_stacked":     (33, 34),   # #ffe6a3 on #544318
+            "arch_contextual_lead_stacked":        (35, 36),   # #dbccff on #3f2e5a
+            "arch_echoing_hinge_stacked":          (37, 38),   # #ffc0a3 on #5a2d18
+            "arch_simultaneous_setup_stacked":     (39, 40),   # #c2ffd2 on #284a32
+            "arch_fragment_stacked":               (41, 42),   # #b4b4d0 on #303042
         }
 
         chunks: list[str] = []
@@ -2143,18 +2149,22 @@ class EditorialApp:
             r"\red41\green30\blue59;"      # 24 Arch Contextual Lead BG  #291e3b
             r"\red244\green160\blue122;"   # 25 Arch Echoing Hinge FG #f4a07a
             r"\red60\green30\blue16;"      # 26 Arch Echoing Hinge BG #3c1e10
-            r"\red138\green138\blue170;"   # 27 Arch Simultaneous Setup FG #8a8aaa
-            r"\red32\green32\blue44;"      # 28 Arch Simultaneous Setup BG #20202c
-            r"\red192\green219\blue255;"   # 29 Arch Subject First Stacked FG #c0dbff
-            r"\red45\green68\blue96;"      # 30 Arch Subject First Stacked BG #2d4460
-            r"\red255\green230\blue163;"   # 31 Arch Participial Launch Stacked FG #ffe6a3
-            r"\red84\green67\blue24;"      # 32 Arch Participial Launch Stacked BG #544318
-            r"\red219\green204\blue255;"   # 33 Arch Contextual Lead Stacked FG #dbccff
-            r"\red63\green46\blue90;"      # 34 Arch Contextual Lead Stacked BG #3f2e5a
-            r"\red255\green192\blue163;"   # 35 Arch Echoing Hinge Stacked FG #ffc0a3
-            r"\red90\green45\blue24;"      # 36 Arch Echoing Hinge Stacked BG #5a2d18
-            r"\red180\green180\blue208;"   # 37 Arch Simultaneous Setup Stacked FG #b4b4d0
-            r"\red48\green48\blue66;"      # 38 Arch Simultaneous Setup Stacked BG #303042
+            r"\red166\green227\blue161;"   # 27 Arch Simultaneous Setup FG #a6e3a1
+            r"\red26\green46\blue30;"      # 28 Arch Simultaneous Setup BG #1a2e1e
+            r"\red138\green138\blue170;"   # 29 Arch Fragment FG #8a8aaa
+            r"\red32\green32\blue44;"      # 30 Arch Fragment BG #20202c
+            r"\red192\green219\blue255;"   # 31 Arch Subject First Stacked FG #c0dbff
+            r"\red45\green68\blue96;"      # 32 Arch Subject First Stacked BG #2d4460
+            r"\red255\green230\blue163;"   # 33 Arch Participial Launch Stacked FG #ffe6a3
+            r"\red84\green67\blue24;"      # 34 Arch Participial Launch Stacked BG #544318
+            r"\red219\green204\blue255;"   # 35 Arch Contextual Lead Stacked FG #dbccff
+            r"\red63\green46\blue90;"      # 36 Arch Contextual Lead Stacked BG #3f2e5a
+            r"\red255\green192\blue163;"   # 37 Arch Echoing Hinge Stacked FG #ffc0a3
+            r"\red90\green45\blue24;"      # 38 Arch Echoing Hinge Stacked BG #5a2d18
+            r"\red194\green255\blue210;"   # 39 Arch Simultaneous Setup Stacked FG #c2ffd2
+            r"\red40\green74\blue50;"      # 40 Arch Simultaneous Setup Stacked BG #284a32
+            r"\red180\green180\blue208;"   # 41 Arch Fragment Stacked FG #b4b4d0
+            r"\red48\green48\blue66;"      # 42 Arch Fragment Stacked BG #303042
             r"}"
         )
         header = (
@@ -4019,7 +4029,8 @@ class EditorialApp:
                 ("#f9d87a", "Participial Launch"),
                 ("#c4a8f8", "Contextual Lead"),
                 ("#f4a07a", "Echoing Hinge"),
-                ("#8a8aaa", "Simultaneous"),
+                ("#a6e3a1", "Simultaneous"),
+                ("#8a8aaa", "Fragment"),
             ],
         }
 

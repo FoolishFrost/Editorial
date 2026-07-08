@@ -909,6 +909,28 @@ def _classify_span(span) -> str | None:
 
     first_token = tokens[0]
 
+    # 6. Fragment Detection (lacks main verb or subject, excluding imperatives)
+    has_verb = any(t.pos_ in ("VERB", "AUX") for t in tokens)
+    is_fragment = False
+    if not has_verb:
+        is_fragment = True
+    else:
+        roots = [t for t in span if t.dep_ == "ROOT"]
+        if roots:
+            root_token = roots[0]
+            if root_token.pos_ in ("VERB", "AUX"):
+                root_subj = [c for c in root_token.children if c.dep_ in ("nsubj", "nsubjpass")]
+                if not root_subj:
+                    if first_token.text.lower() in ("not", "or", "and", "but", "so") or root_token.tag_ in ("VBP", "VBD"):
+                        is_fragment = True
+            else:
+                is_fragment = True
+        else:
+            is_fragment = True
+
+    if is_fragment:
+        return "arch_fragment"
+
     # 2. Participial Launch (VERB VBG present participle)
     if first_token.tag_ == "VBG":
         return "arch_participial_launch"
@@ -960,7 +982,17 @@ def _classify_span(span) -> str | None:
             verb = subj.head
             # Check if verb is a VERB/AUX and appears after the subject
             if verb.pos_ in ("VERB", "AUX") and verb.i > subj.i:
-                return "arch_subject_first"
+                # Exclude sentences that contain complex subordinate/coordinate clauses
+                # that have their own subject/marker (to avoid flagging varied syntax)
+                has_complex_clause = False
+                for t in span:
+                    if t.dep_ in ("advcl", "ccomp") and t != verb:
+                        t_subj = [c for c in t.children if c.dep_ in ("nsubj", "nsubjpass", "mark")]
+                        if t_subj:
+                            has_complex_clause = True
+                            break
+                if not has_complex_clause:
+                    return "arch_subject_first"
 
     return None
 

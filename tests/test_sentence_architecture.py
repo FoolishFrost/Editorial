@@ -23,10 +23,13 @@ class TestSubjectFirstOpener:
         assert _contains_tag("She lunged forward.", "arch_subject_first")
         assert _contains_tag("Ali missed the beast.", "arch_subject_first")
         assert _contains_tag("He ran.", "arch_subject_first")
+        assert _contains_tag("My hands gripped the fingers of the claw holding me.", "arch_subject_first")
 
     def test_non_subject_first_ignored(self):
         # Setting-first or front-loaded sentences are not "Subject-First Opener"
         assert not _contains_tag("Through the thick gray fog, Ali crawled.", "arch_subject_first")
+        # Excluded due to complex subordinate clauses
+        assert not _contains_tag("I rolled toward the sword, letting myself take in the camp as it flashed by my vision.", "arch_subject_first")
 
 
 class TestParticipialLaunch:
@@ -45,6 +48,8 @@ class TestContextualLead:
     def test_preposition_first(self):
         assert _contains_tag("Through the thick gray fog, Ali crawled.", "arch_contextual_lead")
         assert _contains_tag("Near the edge of the fire, the beast waited.", "arch_contextual_lead")
+        # npadvmod lead
+        assert _contains_tag("The moment the sword was in my hand, I sprinted forward.", "arch_contextual_lead")
 
 
 class TestEchoingHinge:
@@ -63,6 +68,21 @@ class TestSimultaneousSetup:
     def test_as_when_trap(self):
         assert _contains_tag("As the beast turned, Ali struck.", "arch_simultaneous_setup")
         assert _contains_tag("When the smoke cleared, Kindra gasped.", "arch_simultaneous_setup")
+
+
+class TestFragment:
+    def test_various_fragments(self):
+        assert _contains_tag("Right.", "arch_fragment")
+        assert _contains_tag("Or any, really.", "arch_fragment")
+        assert _contains_tag("Sixes, extra limbs.", "arch_fragment")
+        assert _contains_tag("Not the kind of thing you’d expect to see on a first date.", "arch_fragment")
+        assert _contains_tag("Ah well, in for a copper...", "arch_fragment")
+        assert _contains_tag("Hate collars, by the way.", "arch_fragment")
+
+    def test_imperatives_not_fragments(self):
+        assert not _contains_tag("Excuse me.", "arch_fragment")
+        assert not _contains_tag("Trust me.", "arch_fragment")
+
 
 
 class TestSyntaxStack:

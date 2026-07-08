@@ -201,8 +201,10 @@ class IndicatorSubsystem:
                     "arch_contextual_lead_stacked": "#dbccff",
                     "arch_echoing_hinge":          "#f4a07a",
                     "arch_echoing_hinge_stacked":  "#ffc0a3",
-                    "arch_simultaneous_setup":     "#8a8aaa",
-                    "arch_simultaneous_setup_stacked": "#b4b4d0",
+                    "arch_simultaneous_setup":     "#a6e3a1",
+                    "arch_simultaneous_setup_stacked": "#c2ffd2",
+                    "arch_fragment":               "#8a8aaa",
+                    "arch_fragment_stacked":       "#b4b4d0",
                 }
                 arch_fracs = getattr(self.app, "_arch_hit_fracs", [])
                 total_clauses = max(1, len(arch_fracs))

@@ -2471,12 +2471,26 @@ class EditorialApp:
             return analyze_sentence_architecture(content, progress_callback=progress_cb)
 
         def apply_worker(run_id: int, hits: list[tuple[int, int, str]], done) -> None:
-            total = len(hits)
+            current_text = self.text.get("1.0", "end-1c")
+            processed_hits = []
+            for ws, we, tag in hits:
+                norm = self._normalize_span(current_text, ws, we)
+                if norm is None:
+                    continue
+                ws, we = norm
+                if getattr(self, "_arch_ignore_dialogue_var", None) and self._arch_ignore_dialogue_var.get():
+                    ws, we = self._trim_dialogue_from_span(current_text, ws, we)
+                if we > ws:
+                    processed_hits.append((ws, we, tag))
+
+            self._arch_hits = processed_hits
+            total = len(processed_hits)
             if total == 0:
                 done("Sentence Architecture - no clauses found")
+                self._arch_counts = {}
+                self._update_status_legend()
                 return
 
-            self._arch_hits = [(ws, we, tag) for ws, we, tag in hits]
             idx = 0
             step = 400
 
@@ -2486,14 +2500,8 @@ class EditorialApp:
                     return
                 t0 = time.perf_counter()
                 end = min(total, idx + step)
-                current_text = self.text.get("1.0", "end-1c")
-                for ws, we, tag in hits[idx:end]:
-                    norm = self._normalize_span(current_text, ws, we)
-                    if norm is None:
-                        continue
-                    ws, we = norm
-                    if we > ws:
-                        self.text.tag_add(tag, f"1.0 + {ws}c", f"1.0 + {we}c")
+                for ws, we, tag in processed_hits[idx:end]:
+                    self.text.tag_add(tag, f"1.0 + {ws}c", f"1.0 + {we}c")
                 idx = end
                 elapsed_ms = (time.perf_counter() - t0) * 1000
                 if elapsed_ms > 0.5:
@@ -2506,15 +2514,13 @@ class EditorialApp:
                     # Build density fracs as (frac, tag) pairs
                     total_chars = max(1, self._text_char_length())
                     fracs: list[tuple[float, str]] = []
-                    for ws, we, tag in hits:
-                        if we <= ws:
-                            continue
+                    for ws, we, tag in processed_hits:
                         mid = (ws + we) // 2
                         fracs.append((max(0.0, min(0.999999, mid / total_chars)), tag))
                     self._arch_hit_fracs = fracs
 
                     counts: dict[str, int] = {}
-                    for _, _, tag in hits:
+                    for _, _, tag in processed_hits:
                         base_tag = tag.replace("_stacked", "")
                         counts[base_tag] = counts.get(base_tag, 0) + 1
 
@@ -3745,6 +3751,45 @@ class EditorialApp:
             for j in range(quote_start + 1, len(chars)):
                 chars[j] = ' '
         return "".join(chars)
+
+    def _trim_dialogue_from_span(self, text: str, start: int, end: int) -> tuple[int, int]:
+        end = min(end, len(text))
+        # Trim leading dialogue
+        while True:
+            while start < end and text[start].isspace():
+                start += 1
+            if start >= end:
+                break
+            if text[start] in ('"', '“'):
+                close_idx = -1
+                for idx in range(start + 1, end):
+                    if text[idx] in ('"', '”'):
+                        close_idx = idx
+                        break
+                if close_idx != -1:
+                    start = close_idx + 1
+                    continue
+            break
+
+        # Trim trailing dialogue
+        while True:
+            while end > start and text[end - 1].isspace():
+                end -= 1
+            if end <= start:
+                break
+            if text[end - 1] in ('"', '”'):
+                open_idx = -1
+                for idx in range(end - 2, start - 1, -1):
+                    if text[idx] in ('"', '“'):
+                        open_idx = idx
+                        break
+                if open_idx != -1:
+                    end = open_idx
+                    continue
+            break
+            
+        return start, end
+
 
 
     def show_pov_names_dialog(self) -> None:

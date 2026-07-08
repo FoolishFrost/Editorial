@@ -171,6 +171,34 @@ class TestDialogueMasking:
         hits_multiline = analyze_sentence_architecture('"                             "\n"                   "')
         assert hits_multiline == []
 
+    def test_trim_dialogue_from_span(self):
+        import tkinter as tk
+        try:
+            root = tk.Tk()
+        except Exception:
+            pytest.skip("Tkinter is not available in this environment")
+
+        from editorial import EditorialApp
+        app = EditorialApp(root)
+
+        # Test case 1: dialogue at the beginning
+        t1 = '“It. Raped. You.” She snarled each word.'
+        start1, end1 = app._trim_dialogue_from_span(t1, 0, 40)
+        assert t1[start1:end1].strip() == 'She snarled each word.'
+
+        # Test case 2: dialogue at the end
+        t2 = 'She snarled, “We’re not even compatible.”'
+        start2, end2 = app._trim_dialogue_from_span(t2, 0, 41)
+        assert t2[start2:end2].strip() == 'She snarled,'
+
+        # Test case 3: entirely dialogue
+        t3 = '“Look, you’re looking at him like he’s... human. He’s not. He’s more of a... dog.”'
+        start3, end3 = app._trim_dialogue_from_span(t3, 0, len(t3))
+        assert start3 >= end3
+
+        root.destroy()
+
+
 
 
 class TestLegendInteractions:

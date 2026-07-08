@@ -3,9 +3,9 @@
 Editorial is a fiction-focused desktop editor built for drafting and revision.
 
 ## Downloads
-- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.2.8/Editorial-Setup-1.2.8.exe
-- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.2.8/Editorial-1.2.8-portable.zip
-- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.2.8
+- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.2.9/Editorial-Setup-1.2.9.exe
+- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.2.9/Editorial-1.2.9-portable.zip
+- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.2.9
 
 ## Documentation
 - User manual (Wiki): https://github.com/FoolishFrost/Editorial/wiki

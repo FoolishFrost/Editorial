@@ -194,17 +194,17 @@ class IndicatorSubsystem:
                 # each clause gets a coloured row at its actual document position.
                 _ARCH_SIDEBAR_COLOURS: dict[str, str] = {
                     "arch_subject_first":          "#c6e0ff",
-                    "arch_subject_first_stacked":  "#e6f2ff",
+                    "arch_subject_first_stacked":  "#c6e0ff",
                     "arch_participial_launch":     "#ffebaf",
-                    "arch_participial_launch_stacked": "#fff3d1",
+                    "arch_participial_launch_stacked": "#ffebaf",
                     "arch_contextual_lead":        "#e3d1ff",
-                    "arch_contextual_lead_stacked": "#f0e6ff",
+                    "arch_contextual_lead_stacked": "#e3d1ff",
                     "arch_echoing_hinge":          "#ffd4c0",
-                    "arch_echoing_hinge_stacked":  "#ffe7db",
+                    "arch_echoing_hinge_stacked":  "#ffd4c0",
                     "arch_simultaneous_setup":     "#d3ffd9",
-                    "arch_simultaneous_setup_stacked": "#ecffef",
+                    "arch_simultaneous_setup_stacked": "#d3ffd9",
                     "arch_fragment":               "#c0c0d8",
-                    "arch_fragment_stacked":       "#e0e0f0",
+                    "arch_fragment_stacked":       "#c0c0d8",
                 }
                 arch_fracs = getattr(self.app, "_arch_hit_fracs", [])
                 total_clauses = max(1, len(arch_fracs))

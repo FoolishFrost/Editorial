@@ -1,7 +1,7 @@
 """editorial_config.py — Static configurations, parameters, and style schemes."""
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.6"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
@@ -104,13 +104,13 @@ ARCH_TAG_STYLES: tuple[tuple[str, str, str, bool], ...] = (
     ("arch_simultaneous_setup",     "#23422a", "#d3ffd9", False),  # sage green
     ("arch_fragment",               "#303040", "#c0c0d8", False),  # slate grey
 
-    # Stacked tags (intensified and bordered)
-    ("arch_subject_first_stacked",          "#355375", "#e6f2ff", True),
-    ("arch_participial_launch_stacked",     "#6e5624", "#fff3d1", True),
-    ("arch_contextual_lead_stacked",        "#553c7a", "#f0e6ff", True),
-    ("arch_echoing_hinge_stacked",          "#753820", "#ffe7db", True),
-    ("arch_simultaneous_setup_stacked",     "#32613d", "#ecffef", True),
-    ("arch_fragment_stacked",               "#484860", "#e0e0f0", True),
+    # Stacked tags (intensified and bordered in red)
+    ("arch_subject_first_stacked",          "#355375", "#ff3333", True),
+    ("arch_participial_launch_stacked",     "#6e5624", "#ff3333", True),
+    ("arch_contextual_lead_stacked",        "#553c7a", "#ff3333", True),
+    ("arch_echoing_hinge_stacked",          "#753820", "#ff3333", True),
+    ("arch_simultaneous_setup_stacked",     "#32613d", "#ff3333", True),
+    ("arch_fragment_stacked",               "#484860", "#ff3333", True),
 )
 
 ARCH_EXPORT_LABELS: dict[str, str] = {

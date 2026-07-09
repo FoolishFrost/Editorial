@@ -72,7 +72,6 @@ Editorial is a lightweight, offline-first desktop editor designed specifically f
   * **Echoing Hinge** (Terracotta): Symmetrical compounds (e.g., *The storm hit, and the lights died.*).
   * **Simultaneous Setup** (Sage Green): Begins with conjunctions like *As*, *When*, or *While*.
   * **Fragment** (Slate Grey): Incomplete grammatical clauses.
-* **Syntax Stacks**: Stacking 3+ identical archetypes in a 100-word window triggers an alert. The highlighting gains a thick border outline, and the right-hand bar turns into a solid, bright band to highlight the monotony.
 * **Why it matters**: Writers frequently fall into a comfortable rhythm (such as writing only subject-first sentences). Sentence Architecture makes these structural ruts visible.
 
 ### 9. Cliches

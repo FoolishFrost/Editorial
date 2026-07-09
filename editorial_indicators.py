@@ -216,11 +216,19 @@ class IndicatorSubsystem:
                         1, y, width - 1, min(height, y + seg_h),
                         fill=color, outline="",
                     )
+            elif getattr(self.app, "_selected_ngram", None) is not None:
+                ngram_fracs = getattr(self.app, "_ngram_hit_fracs", [])
+                for frac in ngram_fracs:
+                    y = int(frac * height)
+                    self.app._density.create_line(
+                        1, y, width - 1, y,
+                        fill=self.colors["ACCENT"], width=2
+                    )
             else:
                 source_fracs = []
                 fill_color = self.colors["ACCENT"]
 
-            if not getattr(self.app, "_arch_active", False):
+            if not getattr(self.app, "_arch_active", False) and getattr(self.app, "_selected_ngram", None) is None:
                 page_counts: list[int] = [0 for _ in range(pages)]
                 for frac in source_fracs:
                     page_idx = min(pages - 1, max(0, int(frac * pages)))

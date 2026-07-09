@@ -226,6 +226,10 @@ class EditorialApp:
         self._filter_hits_lines: dict[str, list[int]] = {"red": [], "purple": []}
         self._filter_hit_fracs: dict[str, list[float]] = {"red": [], "purple": []}
         self._filter_run_seq: int = 0
+        self._selected_ngram: str | None = None
+        self._ngram_hit_fracs: list[float] = []
+        self._ngram_matches: dict[str, list[tuple[int, int]]] = {}
+        self._ngram_run_seq: int = 0
         self._analysis_in_progress: bool = False
         self._progress_pulse_job: str | None = None
         self._progress_pulse_value: int = 1
@@ -807,6 +811,10 @@ class EditorialApp:
         self._single_tree = make_section("Top Single Words")
         self._pairs_tree = make_section("Top Word Pairs")
         self._triples_tree = make_section("Top Word Triples")
+
+        self._single_tree.bind("<<TreeviewSelect>>", self._on_ngram_select)
+        self._pairs_tree.bind("<<TreeviewSelect>>", self._on_ngram_select)
+        self._triples_tree.bind("<<TreeviewSelect>>", self._on_ngram_select)
         self._analysis_visible = False
 
         # Density mini-map canvas (red filter hits)
@@ -984,6 +992,8 @@ class EditorialApp:
                 )
         self.text.tag_configure("find_match",
                     background=FIND_BG, foreground=TEXT)
+        self.text.tag_configure("ngram_hit",
+                    background="#3e445e", foreground="#89b4fa", underline=1)
         self.text.tag_configure("first_line_indent", lmargin1=0, lmargin2=0)
         self._apply_first_line_indent()
 
@@ -1186,6 +1196,7 @@ class EditorialApp:
     def _hide_analysis_panel(self) -> None:
         if not self._analysis_visible:
             return
+        self._select_ngram(None)
         self._analysis_panel.pack_forget()
         self._analysis_visible = False
 
@@ -1196,6 +1207,119 @@ class EditorialApp:
             return
         for gram, count in items:
             table.insert("", tk.END, values=(gram, str(count)))
+
+    def _on_ngram_select(self, event) -> None:
+        # Update UI visually immediately before doing any heavy operations
+        self.root.update_idletasks()
+
+        tree = event.widget
+        sel = tree.selection()
+        if not sel:
+            return
+
+        # Clear selection on other trees
+        for other_tree in (self._single_tree, self._pairs_tree, self._triples_tree):
+            if other_tree is not tree:
+                try:
+                    if other_tree.selection():
+                        other_tree.selection_set(())
+                except tk.TclError:
+                    pass
+
+        # Get selected phrase
+        item_id = sel[0]
+        values = tree.item(item_id, "values")
+        if values:
+            gram = values[0]
+            if gram == "(none)":
+                self._select_ngram(None)
+            else:
+                self._select_ngram(gram)
+        else:
+            self._select_ngram(None)
+
+    def _select_ngram(self, phrase: str | None) -> None:
+        self._ngram_run_seq += 1
+        run_id = self._ngram_run_seq
+
+        self.text.tag_remove("ngram_hit", "1.0", "end")
+        self._selected_ngram = phrase
+        self._ngram_hit_fracs = []
+
+        if not phrase:
+            self._ngram_matches = {}
+            # Clear selection in all treeviews to sync UI
+            for tree in (self._single_tree, self._pairs_tree, self._triples_tree):
+                try:
+                    if tree.selection():
+                        tree.selection_set(())
+                except tk.TclError:
+                    pass
+            self._set_editor_progress(None, "")
+            if not self._mode_uses_density_band():
+                self._hide_density_band()
+            else:
+                self._request_density_redraw()
+            return
+
+        # Ensure active editor mode is OFF to prevent interference
+        if self._active_editor_mode != EDITOR_MODE_OFF:
+            self.set_editor_mode(EDITOR_MODE_OFF)
+
+        self._selected_ngram = phrase
+
+        # Retrieve precomputed match ranges
+        ranges = self._ngram_matches.get(phrase, [])
+        if not ranges:
+            self._show_density_band()
+            self._request_density_redraw()
+            return
+
+        # Compute midpoint fractions instantly using character offsets (avoiding heavy Tkinter displayline counting)
+        self._ngram_hit_fracs = self._compute_midpoint_fracs(ranges)
+        self._show_density_band()
+        self._request_density_redraw()
+
+        # Perform progressive/asynchronous tagging to keep UI responsive
+        total = len(ranges)
+        idx = 0
+        step = 100
+
+        import time
+
+        def run_chunk() -> None:
+            nonlocal idx, step
+            if run_id != self._ngram_run_seq:
+                # Cancel if another scan/selection was triggered
+                return
+
+            t0 = time.perf_counter()
+            end = min(total, idx + step)
+            flat_args: list[str] = []
+            for ws, we in ranges[idx:end]:
+                if we <= ws:
+                    continue
+                flat_args.append(f"1.0 + {ws}c")
+                flat_args.append(f"1.0 + {we}c")
+            if flat_args:
+                self.text.tk.call(self.text._w, "tag", "add", "ngram_hit", *flat_args)
+            idx = end
+
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if elapsed_ms > 0.5:
+                # Scale step based on execution speed, keeping layout rendering responsive
+                step = max(20, min(1000, int(step * 8.0 / elapsed_ms)))
+
+            pct = int((idx / total) * 100)
+            self._set_editor_progress(pct, f"Highlighting '{phrase}'")
+
+            if idx < total:
+                self.root.after(1, run_chunk)
+            else:
+                # Finished progressive tagging
+                self._set_editor_progress(None, "")
+
+        run_chunk()
 
     # ----------------------------------------------------------- status bar
 
@@ -1394,6 +1518,7 @@ class EditorialApp:
             or getattr(self, "_redundancy_active", False)
             or getattr(self, "_passive_voice_active", False)
             or getattr(self, "_arch_active", False)
+            or (self._analysis_visible and getattr(self, "_selected_ngram", None) is not None)
         )
 
     def _mode_uses_quote_band(self) -> bool:
@@ -1520,6 +1645,17 @@ class EditorialApp:
         self._clear_passive_voice_highlights()
         self._clear_arch_highlights()
         self._hide_quote_band()
+        if mode != EDITOR_MODE_OFF:
+            self.text.tag_remove("ngram_hit", "1.0", "end")
+            self._selected_ngram = None
+            self._ngram_hit_fracs = []
+            self._ngram_matches = {}
+            for tree in (self._single_tree, self._pairs_tree, self._triples_tree):
+                try:
+                    if tree.selection():
+                        tree.selection_set(())
+                except tk.TclError:
+                    pass
         self._hide_density_band()
 
         if mode == EDITOR_MODE_OFF:
@@ -1724,6 +1860,7 @@ class EditorialApp:
             messagebox.showinfo("N-gram Scan", "No text to analyze.")
             return
 
+        self._select_ngram(None)
         self._acquire_ui_lock()
         dlg = tk.Toplevel(self.root)
         dlg.withdraw()
@@ -1765,7 +1902,7 @@ class EditorialApp:
             self._populate_ngram_table(self._triples_tree, result["triples"])
             self._show_analysis_panel()
 
-        def finish(error: Exception | None, result: dict[str, list[tuple[str, int]]] | None) -> None:
+        def finish(error: Exception | None, result: dict[str, Any] | None) -> None:
             try:
                 dlg.grab_release()
                 dlg.destroy()
@@ -1776,6 +1913,7 @@ class EditorialApp:
                 messagebox.showerror("N-gram Scan", str(error))
                 return
             if result is not None:
+                self._ngram_matches = result.get("matches", {})
                 render_results(result)
 
         def worker() -> None:
@@ -1789,7 +1927,7 @@ class EditorialApp:
                 ]
                 total = len(tokens)
                 if total == 0:
-                    self.root.after(0, lambda: finish(None, {"single": [], "pairs": [], "triples": []}))
+                    self.root.after(0, lambda: finish(None, {"single": [], "pairs": [], "triples": [], "matches": {}}))
                     return
 
                 self.root.after(0, lambda: set_progress(10))
@@ -1805,10 +1943,47 @@ class EditorialApp:
                 top_pairs = [(" ".join(k), c) for k, c in bi.most_common(10)]
                 top_triples = [(" ".join(k), c) for k, c in tri.most_common(10)]
 
+                # Pre-collect match objects to map tokens to spans
+                filtered_matches = [
+                    m for m in token_re.finditer(ngram_text)
+                    if (tok := m.group(0)).replace("'", "").isalpha() and len(tok) > 1 and tok not in blocked_words
+                ]
+                
+                # Build matches map for top 30
+                matches_map: dict[str, list[tuple[int, int]]] = {}
+                
+                # Single words
+                top_single_set = {w for w, _ in top_single}
+                for w in top_single_set:
+                    matches_map[w] = []
+                for i, m in enumerate(filtered_matches):
+                    w = tokens[i]
+                    if w in top_single_set:
+                        matches_map[w].append((m.start(), m.end()))
+                
+                # Word pairs
+                top_pairs_keys = {k for k, _ in bi.most_common(10)}
+                for k in top_pairs_keys:
+                    matches_map[" ".join(k)] = []
+                for i in range(len(tokens) - 1):
+                    k = (tokens[i], tokens[i+1])
+                    if k in top_pairs_keys:
+                        matches_map[" ".join(k)].append((filtered_matches[i].start(), filtered_matches[i+1].end()))
+                
+                # Word triples
+                top_triples_keys = {k for k, _ in tri.most_common(10)}
+                for k in top_triples_keys:
+                    matches_map[" ".join(k)] = []
+                for i in range(len(tokens) - 2):
+                    k = (tokens[i], tokens[i+1], tokens[i+2])
+                    if k in top_triples_keys:
+                        matches_map[" ".join(k)].append((filtered_matches[i].start(), filtered_matches[i+2].end()))
+
                 result = {
                     "single": top_single,
                     "pairs": top_pairs,
                     "triples": top_triples,
+                    "matches": matches_map,
                 }
                 self.root.after(0, lambda: set_progress(100))
                 self.root.after(0, lambda: finish(None, result))

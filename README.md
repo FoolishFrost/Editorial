@@ -3,9 +3,9 @@
 Editorial is a fiction-focused desktop editor built for drafting and revision. it makes no use of AI, LLM, or similar systems. It uses only algorithmic detection to highlight writing patterns, allowing an editor to quickly correct a manuscript of 100,000 words or more. it does not make changes on its own, instead just highlighting possible issues so a skilled edior can work.
 
 ## Downloads
-- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.3.0/Editorial-Setup-1.3.0.exe
-- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.3.0/Editorial-1.3.0-portable.zip
-- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.3.0
+- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.3.4/Editorial-Setup-1.3.4.exe
+- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.3.4/Editorial-1.3.4-portable.zip
+- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.3.4
 
 ## Documentation
 - User manual (Wiki): https://github.com/FoolishFrost/Editorial/wiki
@@ -20,6 +20,7 @@ Editorial keeps the writing experience focused on fiction work while letting you
 - **Proximity Echo Radar**: Detects nearby word repetitions within a configurable sliding scale window (1-100 words distance, default 80).
 - **Rhythm & Pacing**: Heatmap-style sentence-length analyzer showing Short, Balanced, and Long sentences based on a user-adjustable max threshold slider (5-50 words, default 19).
 - **Sentence Architecture**: Analyzes the structural blueprint of your prose, targeting 6 specific structural patterns (Subject-First Opener, Participial Launch, Contextual Lead, Echoing Hinge, Simultaneous Setup, and Fragment) and alerting you to **Syntax Stacks** (3+ repetitions in a 100-word window) to vary sentence structures for more interesting reading. Includes an option to ignore dialogue text.
+- **N-gram Scan**: Analyzes overused word combination frequencies (Single Words, Word Pairs, Word Triples). Clicking any phrase highlights all matches progressively, showing progress in the status bar, and displaying occurrence ticks instantly in the left-side line heatmap gutter for quick scroll navigation.
 - **Cliches**: Scans text against standard or customizable cliché databases (`cliches.txt`).
 - **Redundancies**: Highlights duplicate or redundant wording patterns based on customized rules (`redundancies.txt`).
 - **Passive Voice**: Locates passive construction patterns (was eaten, had been seen).

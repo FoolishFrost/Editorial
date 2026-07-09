@@ -163,7 +163,7 @@ class IndicatorSubsystem:
             if self.app.filter_active:
                 if not any(self.app._filter_hit_fracs.values()) and any(self.app._filter_hits.values()):
                     for level in ("red", "purple"):
-                        self.app._filter_hit_fracs[level] = self.app._compute_displayline_midpoint_fracs(
+                        self.app._filter_hit_fracs[level] = self.app._compute_midpoint_fracs(
                             self.app._filter_hits.get(level, [])
                         )
                 source_fracs = self.app._filter_hit_fracs.get("red", [])

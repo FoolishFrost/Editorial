@@ -174,58 +174,12 @@ class ModeSubsystem:
         self._build_weak_density_cache_async(run_id, lambda: self._finalize_weak_mod_processing(run_id))
 
     def _build_weak_density_cache_async(self, run_id: int, done_callback) -> None:
-        total = len(self._weak_mod_hits)
-        self._weak_hit_fracs = []
-        if total == 0:
-            self._set_editor_progress(100, "Weak")
-            self.root.after(1, done_callback)
-            return
-
-        try:
-            total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
-        except Exception:
-            total_display_lines = 1
-        total_display_lines = max(1, total_display_lines)
-        idx = 0
-        step = 600
-        prev_idx_str = "1.0"
-        prev_disp = 0
-
-        def run_chunk() -> None:
-            nonlocal idx, step, prev_idx_str, prev_disp
-            if run_id != self._weak_mod_run_seq:
-                return
-            t0 = time.perf_counter()
-            end = min(total, idx + step)
-            for ws, we in self._weak_mod_hits[idx:end]:
-                mid = (ws + we) // 2
-                try:
-                    idx_str = self.text.index(f"1.0 + {mid}c")
-                    delta = int(self.text.count(prev_idx_str, idx_str, "displaylines")[0])
-                    disp = prev_disp + max(0, delta)
-                except Exception:
-                    try:
-                        idx_str = self.text.index(f"1.0 + {mid}c")
-                        disp = int(self.text.count("1.0", idx_str, "displaylines")[0])
-                    except Exception:
-                        continue
-
-                prev_idx_str = idx_str
-                prev_disp = disp
-                self._weak_hit_fracs.append(max(0.0, min(0.999999, disp / total_display_lines)))
-
-            idx = end
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if elapsed_ms > 0.5:
-                step = max(40, min(1500, int(step * 8.0 / elapsed_ms)))
-            pct = 85 + int((idx / total) * 15)
-            self._set_editor_progress(pct, "Weak")
-            if idx < total:
-                self.root.after(1, run_chunk)
-            else:
+        self._weak_hit_fracs = self._compute_midpoint_fracs(self._weak_mod_hits)
+        def run_callback() -> None:
+            if run_id == self._weak_mod_run_seq:
                 self._request_density_redraw()
                 done_callback()
-        run_chunk()
+        self.root.after(1, run_callback)
 
     def _finalize_weak_mod_processing(self, run_id: int) -> None:
         if run_id != self._weak_mod_run_seq:

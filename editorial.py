@@ -2407,67 +2407,11 @@ class EditorialApp:
         ranges: list[tuple[int, int]],
         on_done,
     ) -> None:
-        if not ranges:
-            self.root.after(1, lambda: on_done([]))
-            return
-
-        try:
-            total_display_lines = int(self.text.count("1.0", "end-1c", "displaylines")[0])
-        except Exception:
-            total_display_lines = 1
-        total_display_lines = max(1, total_display_lines)
-
-        mids = sorted(((ws + we) // 2 for ws, we in ranges if we > ws))
-        if not mids:
-            self.root.after(1, lambda: on_done([]))
-            return
-
-        # Mapping every hit through displayline counting is expensive on very
-        # large hit sets (Echo can produce thousands). Fall back to char-space
-        # fractions to keep mode activation responsive.
-        if len(mids) > 2400:
-            self.root.after(1, lambda: on_done(self._compute_midpoint_fracs(ranges)))
-            return
-
-        fracs: list[float] = []
-        idx = 0
-        step = 600
-        prev_idx_str = "1.0"
-        prev_disp = 0
-        total = len(mids)
-
-        def run_chunk() -> None:
-            nonlocal idx, step, prev_idx_str, prev_disp
-            if run_id != self._mode_wrapper_run_seq:
-                return
-            t0 = time.perf_counter()
-            end = min(total, idx + step)
-            for mid in mids[idx:end]:
-                try:
-                    idx_str = self.text.index(f"1.0 + {mid}c")
-                    delta = int(self.text.count(prev_idx_str, idx_str, "displaylines")[0])
-                    disp = prev_disp + max(0, delta)
-                except Exception:
-                    try:
-                        idx_str = self.text.index(f"1.0 + {mid}c")
-                        disp = int(self.text.count("1.0", idx_str, "displaylines")[0])
-                    except Exception:
-                        continue
-
-                prev_idx_str = idx_str
-                prev_disp = disp
-                fracs.append(max(0.0, min(0.999999, disp / total_display_lines)))
-
-            idx = end
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if elapsed_ms > 0.5:
-                step = max(40, min(1500, int(step * 8.0 / elapsed_ms)))
-            if idx < total:
-                self.root.after(1, run_chunk)
-            else:
+        fracs = self._compute_midpoint_fracs(ranges)
+        def run_callback() -> None:
+            if run_id == self._mode_wrapper_run_seq:
                 on_done(fracs)
-
-        run_chunk()
+        self.root.after(1, run_callback)
 
     def _normalize_span(self, text: str, start: int, end: int) -> tuple[int, int] | None:
         s = max(0, start)

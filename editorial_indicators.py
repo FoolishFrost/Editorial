@@ -214,7 +214,9 @@ class IndicatorSubsystem:
                         continue
                     counts = {}
                     for t in tags_in_y:
-                        counts[t] = counts.get(t, 0) + 1
+                        # Subject-First gets a lower weight (0.3) so rarer tags override it when present in the same segment.
+                        weight = 0.3 if t == "arch_subject_first" else 1.0
+                        counts[t] = counts.get(t, 0.0) + weight
                     predominant_tag = max(counts, key=counts.get)
                     color = _ARCH_SIDEBAR_COLOURS.get(predominant_tag, self.colors["ACCENT"])
                     

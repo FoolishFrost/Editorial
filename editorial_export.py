@@ -239,7 +239,7 @@ def build_rtf_export(text: str, ranges: list[tuple[int, int, str]]) -> str:
         word = rtf_escape(text[start:end])
         cf, highlight = level_colors.get(level, (1, 2))
         underline = level in {"quote", "dash", "ellipsis", "loud", "echo", "typography", "dialogue_tag"}
-        is_arch_stacked = level.endswith("_stacked")
+        is_arch_stacked = False
         prefix = r"{\cf" + str(cf) + r"\highlight" + str(highlight) + " "
         if underline or is_arch_stacked:
             prefix += r"\ul "

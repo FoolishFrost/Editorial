@@ -1,7 +1,7 @@
 """editorial_config.py — Static configurations, parameters, and style schemes."""
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.3.7"
+APP_VERSION = "1.3.8"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"

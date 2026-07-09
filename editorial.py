@@ -2327,12 +2327,13 @@ class EditorialApp:
                 if idx < total:
                     self.root.after(1, run_chunk)
                 else:
-                    # Build density fracs as (frac, tag) pairs
+                    # Build density fracs as (frac, tag) pairs (only for stacked/overused structures to highlight monotony)
                     total_chars = max(1, self._text_char_length())
                     fracs: list[tuple[float, str]] = []
                     for ws, we, tag in processed_hits:
-                        mid = (ws + we) // 2
-                        fracs.append((max(0.0, min(0.999999, mid / total_chars)), tag))
+                        if tag.endswith("_stacked"):
+                            mid = (ws + we) // 2
+                            fracs.append((max(0.0, min(0.999999, mid / total_chars)), tag))
                     self._arch_hit_fracs = fracs
 
                     counts: dict[str, int] = {}

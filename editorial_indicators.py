@@ -190,30 +190,36 @@ class IndicatorSubsystem:
                 source_fracs = getattr(self.app, "_passive_voice_hit_fracs", [])
                 fill_color = "#f06292" # Passive voice color
             elif getattr(self.app, "_arch_active", False):
-                # Sentence Architecture: draw a positional colour strip —
-                # each clause gets a coloured row at its actual document position.
+                # Sentence Architecture: draw a positional color strip
+                # Using vibrant, saturated mid-tones to avoid washing out to white
                 _ARCH_SIDEBAR_COLOURS: dict[str, str] = {
-                    "arch_subject_first":          "#c6e0ff",
-                    "arch_subject_first_stacked":  "#c6e0ff",
-                    "arch_participial_launch":     "#ffebaf",
-                    "arch_participial_launch_stacked": "#ffebaf",
-                    "arch_contextual_lead":        "#e3d1ff",
-                    "arch_contextual_lead_stacked": "#e3d1ff",
-                    "arch_echoing_hinge":          "#ffd4c0",
-                    "arch_echoing_hinge_stacked":  "#ffd4c0",
-                    "arch_simultaneous_setup":     "#d3ffd9",
-                    "arch_simultaneous_setup_stacked": "#d3ffd9",
-                    "arch_fragment":               "#c0c0d8",
-                    "arch_fragment_stacked":       "#c0c0d8",
+                    "arch_subject_first":          "#3b82f6",  # Vibrant Blue
+                    "arch_participial_launch":     "#f5a623",  # Vibrant Gold
+                    "arch_contextual_lead":        "#a855f7",  # Vibrant Purple
+                    "arch_echoing_hinge":          "#f97316",  # Vibrant Orange
+                    "arch_simultaneous_setup":     "#22c55e",  # Vibrant Green
+                    "arch_fragment":               "#64748b",  # Vibrant Grey
                 }
                 arch_fracs = getattr(self.app, "_arch_hit_fracs", [])
-                total_clauses = max(1, len(arch_fracs))
-                seg_h = max(2, height // max(1, total_clauses))
+                
+                # Determine predominant tag for each pixel y-coordinate to prevent additive/brightening whiteout
+                bins: dict[int, list[str]] = {}
                 for frac, tag in arch_fracs:
+                    base_tag = tag.replace("_stacked", "")
                     y = int(frac * height)
-                    color = _ARCH_SIDEBAR_COLOURS.get(tag, self.colors["ACCENT"])
+                    bins.setdefault(y, []).append(base_tag)
+                
+                for y, tags_in_y in bins.items():
+                    if not tags_in_y:
+                        continue
+                    counts = {}
+                    for t in tags_in_y:
+                        counts[t] = counts.get(t, 0) + 1
+                    predominant_tag = max(counts, key=counts.get)
+                    color = _ARCH_SIDEBAR_COLOURS.get(predominant_tag, self.colors["ACCENT"])
+                    
                     self.app._density.create_rectangle(
-                        1, y, width - 1, min(height, y + seg_h),
+                        1, y, width - 1, min(height, y + 2),
                         fill=color, outline="",
                     )
             elif getattr(self.app, "_selected_ngram", None) is not None:

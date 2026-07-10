@@ -302,6 +302,7 @@ class EditorialApp:
     def _build_menu(self) -> None:
         cfg = dict(bg=BG_SURFACE, fg=TEXT,
                    activebackground=ACCENT, activeforeground=BG,
+                   selectcolor=TEXT,
                    tearoff=False)
         bar = tk.Menu(self.root, **cfg)
 
@@ -473,6 +474,14 @@ class EditorialApp:
         # Help ---------------------------------------------------------------
         hm = tk.Menu(bar, **cfg)
         hm.add_command(label="Docs", command=self.open_docs)
+        ref_menu = tk.Menu(hm, **cfg)
+        ref_menu.add_command(label="File Menu Reference", command=lambda: self.open_local_help("file-menu"))
+        ref_menu.add_command(label="Edit Menu Reference", command=lambda: self.open_local_help("edit-menu"))
+        ref_menu.add_command(label="View Menu Reference", command=lambda: self.open_local_help("view-menu"))
+        ref_menu.add_command(label="Punctuation Menu Reference", command=lambda: self.open_local_help("punctuation-menu"))
+        ref_menu.add_command(label="Tools Menu Reference", command=lambda: self.open_local_help("tools-menu"))
+        ref_menu.add_command(label="Help Menu Reference", command=lambda: self.open_local_help("help-menu"))
+        hm.add_cascade(label="Menu Reference", menu=ref_menu)
         hm.add_command(label="Check for Updates", command=self.check_for_updates)
         hm.add_separator()
         hm.add_command(label="About Editorial", command=self.show_about_dialog)
@@ -555,8 +564,26 @@ class EditorialApp:
             textvariable=self._editor_mode_label_var,
             width=24,
         )
-        self._mode_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self._mode_combo.pack(side=tk.LEFT, padx=(0, 4))
         self._mode_combo.bind("<<ComboboxSelected>>", self._on_mode_combo_selected)
+
+        self._mode_help_btn = tk.Button(
+            self._toolbar,
+            text="ⓘ",
+            command=self._on_context_help_clicked,
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            activebackground=BG_SURFACE,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            padx=2,
+            pady=2,
+            cursor="hand2",
+            font=("Segoe UI", 11, "bold"),
+        )
+        self._mode_help_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(self._mode_help_btn, "Open manual for the active mode")
 
         self._mode_progress_label = tk.Label(
             self._toolbar,
@@ -692,8 +719,11 @@ class EditorialApp:
         # Right analysis panel (shown on demand)
         self._analysis_panel = tk.Frame(container, bg=BG_SURFACE, width=380)
         self._analysis_panel.pack_propagate(False)
+        header_frame = tk.Frame(self._analysis_panel, bg=BG_SURFACE)
+        header_frame.pack(fill=tk.X)
+
         self._analysis_title = tk.Label(
-            self._analysis_panel,
+            header_frame,
             text="Overused Combinations",
             bg=BG_SURFACE,
             fg=TEXT,
@@ -702,7 +732,25 @@ class EditorialApp:
             padx=10,
             pady=8,
         )
-        self._analysis_title.pack(fill=tk.X)
+        self._analysis_title.pack(side=tk.LEFT)
+
+        self._ngram_help_btn = tk.Button(
+            header_frame,
+            text="ⓘ",
+            command=lambda: self.open_local_help("n-gram-scan"),
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            activebackground=BG_SURFACE,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            padx=4,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 11, "bold"),
+        )
+        self._ngram_help_btn.pack(side=tk.LEFT, padx=2)
+        ToolTip(self._ngram_help_btn, "Open manual for N-gram Scan")
         self._analysis_close = tk.Button(
             self._analysis_panel,
             text="Close",
@@ -1477,16 +1525,7 @@ class EditorialApp:
         self._mode_progress_label.config(text=f"Processing {pct}%")
 
     def _refresh_tools_mode_markers(self) -> None:
-        menu = getattr(self, "_tools_menu", None)
-        if menu is None:
-            return
-        active = self._active_editor_mode
-        for idx, base_label, mode in self._tools_mode_entries:
-            mark = "● " if mode == active else "  "
-            try:
-                menu.entryconfig(idx, label=f"{mark}{base_label}")
-            except Exception:
-                continue
+        pass
 
     def _start_filter_bootstrap_progress(self, run_id: int) -> None:
         def tick() -> None:
@@ -4005,8 +4044,69 @@ class EditorialApp:
             f"Paragraphs:  {paras}",
         )
 
+    def open_local_help(self, anchor: str = "") -> None:
+        import os
+        import sys
+        import webbrowser
+        from pathlib import Path
+
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        filename_map = {
+            "": "index.html",
+            "filter-words": "filter_words.html",
+            "weak-modifiers": "weak_modifiers.html",
+            "punctuation-mode": "punctuation_mode.html",
+            "dialogue-tags": "dialogue_tags.html",
+            "emotion-catcher": "emotion_catcher.html",
+            "proximity-echo-radar": "proximity_echo_radar.html",
+            "rhythm-and-pacing": "rhythm_and_pacing.html",
+            "cliches": "cliches.html",
+            "redundancies": "redundancies.html",
+            "passive-voice": "passive_voice.html",
+            "sentence-architecture": "sentence_architecture.html",
+            "spell-checking": "spell_checking.html",
+            "n-gram-scan": "n_gram_scan.html",
+            "file-menu": "file_menu.html",
+            "edit-menu": "edit_menu.html",
+            "view-menu": "view_menu.html",
+            "punctuation-menu": "punctuation_menu.html",
+            "tools-menu": "tools_menu.html",
+            "help-menu": "help_menu.html",
+        }
+        filename = filename_map.get(anchor, "index.html")
+        help_path = os.path.join(base_dir, "help", filename)
+        if not os.path.exists(help_path):
+            self._open_url(WIKI_URL)
+            return
+
+        help_uri = Path(help_path).as_uri()
+        webbrowser.open(help_uri)
+
+    def _on_context_help_clicked(self) -> None:
+        mode = self._active_editor_mode or EDITOR_MODE_OFF
+        anchor_map = {
+            EDITOR_MODE_OFF: "",
+            EDITOR_MODE_FILTER: "filter-words",
+            EDITOR_MODE_WEAK: "weak-modifiers",
+            EDITOR_MODE_PUNCT: "punctuation-mode",
+            EDITOR_MODE_DTAG: "dialogue-tags",
+            EDITOR_MODE_EMOTION: "emotion-catcher",
+            EDITOR_MODE_ECHO: "proximity-echo-radar",
+            EDITOR_MODE_PACING: "rhythm-and-pacing",
+            EDITOR_MODE_CLICHE: "cliches",
+            EDITOR_MODE_REDUNDANCY: "redundancies",
+            EDITOR_MODE_PASSIVE: "passive-voice",
+            EDITOR_MODE_ARCH: "sentence-architecture",
+        }
+        anchor = anchor_map.get(mode, "")
+        self.open_local_help(anchor)
+
     def open_docs(self) -> None:
-        self._open_url(WIKI_URL)
+        self.open_local_help("")
 
     def check_for_updates(self) -> None:
         dlg = tk.Toplevel(self.root)
@@ -4300,6 +4400,35 @@ class EditorialApp:
         self._update_status()
         if self._echo_active and not self._mode_wrapper_processing:
             self._schedule_echo_focus_refresh()
+
+
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self.tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                         background="#313244", foreground="#cdd6f4",
+                         relief=tk.SOLID, borderwidth=1,
+                         font=("Segoe UI", 9))
+        label.pack(ipadx=4, ipady=2)
+
+    def hide_tip(self, event=None):
+        tw = self.tip
+        self.tip = None
+        if tw:
+            tw.destroy()
 
 
 # ---------------------------------------------------------------------------

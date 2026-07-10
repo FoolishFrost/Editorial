@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editorial User Manual</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        
+:root {
+    --bg: #1e1e2e;
+    --bg-surface: #181825;
+    --bg-overlay: #313244;
+    --text: #cdd6f4;
+    --text-subtle: #6c7086;
+    --accent: #89b4fa;
+    
+    --red: #f38ba8;
+    --green: #a6e3a1;
+    --yellow: #f9e2af;
+    --orange: #f2cd96;
+    --purple: #cba6f7;
+    --grey: #94e2d5;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+}
+
+body {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar Navigation */
+.sidebar {
+    width: 280px;
+    background-color: var(--bg-surface);
+    border-right: 1px solid var(--bg-overlay);
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    overflow-y: auto;
+    padding: 24px 16px;
+}
+
+.sidebar h2 {
+    font-size: 1.1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    margin-bottom: 16px;
+    padding-left: 8px;
+}
+
+.sidebar ul {
+    list-style: none;
+    margin-bottom: 24px;
+}
+
+.sidebar li {
+    margin-bottom: 4px;
+}
+
+.sidebar a {
+    display: block;
+    padding: 8px 12px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.sidebar a:hover {
+    background-color: var(--bg-overlay);
+    color: var(--accent);
+}
+
+.sidebar a.active {
+    background-color: var(--bg-overlay);
+    color: var(--accent);
+    font-weight: 500;
+}
+
+/* Content Area */
+.content {
+    margin-left: 280px;
+    flex-grow: 1;
+    padding: 40px 60px;
+    max-width: 1000px;
+    line-height: 1.6;
+}
+
+h1 {
+    font-size: 2.2rem;
+    color: var(--accent);
+    margin-bottom: 12px;
+}
+
+h2 {
+    font-size: 1.6rem;
+    color: var(--accent);
+    margin-top: 24px;
+    margin-bottom: 16px;
+}
+
+h3 {
+    font-size: 1.2rem;
+    margin-top: 20px;
+    margin-bottom: 10px;
+}
+
+p {
+    margin-bottom: 16px;
+    color: var(--text);
+}
+
+ul, ol {
+    margin-bottom: 16px;
+    padding-left: 24px;
+}
+
+li {
+    margin-bottom: 8px;
+}
+
+code {
+    font-family: 'Consolas', monospace;
+    background-color: var(--bg-surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.shortcut {
+    display: inline-block;
+    background-color: var(--bg-overlay);
+    border: 1px solid var(--text-subtle);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.8em;
+    font-family: inherit;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2);
+    color: var(--accent);
+}
+
+/* Tool specific header borders for visual grouping */
+.tool-header {
+    padding-left: 12px;
+    margin-bottom: 12px;
+}
+.tool-filter { border-left: 4px solid var(--red); }
+.tool-weak { border-left: 4px solid var(--orange); }
+.tool-punct { border-left: 4px solid var(--text); }
+.tool-dialogue { border-left: 4px solid var(--purple); }
+.tool-emotion { border-left: 4px solid var(--yellow); }
+.tool-echo { border-left: 4px solid var(--accent); }
+.tool-pacing { border-left: 4px solid var(--orange); }
+.tool-cliche { border-left: 4px solid var(--green); }
+.tool-redundancy { border-left: 4px solid var(--yellow); }
+.tool-passive { border-left: 4px solid var(--red); }
+.tool-arch { border-left: 4px solid var(--accent); }
+.tool-spell { border-left: 4px solid var(--red); text-decoration: underline wavy var(--red) 2px; }
+.tool-ngram { border-left: 4px solid var(--accent); }
+
+.pacing-gradient {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+    width: 100%;
+}
+.pacing-gradient div {
+    flex-grow: 1;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 10px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--bg-overlay);
+    border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-subtle);
+}
+
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h2>Manual Index</h2>
+        <ul>
+            <li><a href="index.html">Introduction</a></li>
+        </ul>
+
+        <h2>Menu References</h2>
+        <ul>
+            <li><a href="file_menu.html">File Menu</a></li>
+            <li><a href="edit_menu.html">Edit Menu</a></li>
+            <li><a href="view_menu.html">View Menu</a></li>
+            <li><a href="punctuation_menu.html" class="active">Punctuation Menu</a></li>
+            <li><a href="tools_menu.html">Tools Menu</a></li>
+            <li><a href="help_menu.html">Help Menu</a></li>
+        </ul>
+
+        <h2>Analysis Tools</h2>
+        <ul>
+            <li><a href="filter_words.html">1. Filter Words</a></li>
+            <li><a href="weak_modifiers.html">2. Weak Modifiers</a></li>
+            <li><a href="punctuation_mode.html">3. Punctuation Mode</a></li>
+            <li><a href="dialogue_tags.html">4. Dialogue Tags</a></li>
+            <li><a href="emotion_catcher.html">5. Emotion Catcher</a></li>
+            <li><a href="proximity_echo_radar.html">6. Proximity Echo Radar</a></li>
+            <li><a href="rhythm_and_pacing.html">7. Rhythm and Pacing</a></li>
+            <li><a href="cliches.html">8. Cliches</a></li>
+            <li><a href="redundancies.html">9. Redundancies</a></li>
+            <li><a href="passive_voice.html">10. Passive Voice</a></li>
+            <li><a href="sentence_architecture.html">11. Sentence Architecture</a></li>
+            <li><a href="spell_checking.html">12. Spell Checking</a></li>
+            <li><a href="n_gram_scan.html">13. N-gram Scan</a></li>
+        </ul>
+
+    </nav>
+    <main class="content">
+
+        <h2>Punctuation Menu Reference</h2>
+        <p>Provides automated bulk cleanup actions to clean up drafts. <em>Note: These commands perform permanent edit transformations on your draft.</em></p>
+        <ul>
+            <li><strong>Convert to Smart Quotes</strong>: Replaces straight quotes (`"` and `'`) with curly typographical quotation marks (`“`, `”`, `‘`, `’`) matching structural dialogue context.</li>
+            <li><strong>Convert to Straight Quotes</strong>: Replaces curly quotes with plain straight ones. Useful for code compatibility or specific web publications.</li>
+            <li><strong>Convert Ellipses to Standard</strong>: Standardizes consecutive dots or unicode characters into spaced period ellipses (`. . .`), the standard in traditional publishing formats.</li>
+            <li><strong>Convert Ellipses to Character</strong>: Compresses spaced period ellipses into the single unicode ellipsis glyph (`…`).</li>
+            <li><strong>Clean Whitespace</strong>: Trims trailing spaces from the end of all lines, replaces tab characters, and collapses triple blank lines.</li>
+        </ul>
+        </main>
+</body>
+</html>

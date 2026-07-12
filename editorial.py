@@ -245,14 +245,14 @@ class EditorialApp:
         self._pov_names_var = tk.StringVar()
         self._pov_names_dialog: tk.Toplevel | None = None
         self._pov_names_edit_var = tk.StringVar()
-        self._settings_path = self._get_settings_path()
-        self._load_user_settings()
-        self._modes = ModeSubsystem(self)
-
         self._spellcheck_active: bool = True
         self._spellcheck_run_seq: int = 0
         self._spellcheck_job: str | None = None
         self._spellcheck_toggle_var = tk.BooleanVar(value=True)
+        self._settings_path = self._get_settings_path()
+        self._load_user_settings()
+        self._modes = ModeSubsystem(self)
+
         for method_name in ModeSubsystem.EXPORTED_METHODS:
             setattr(self, method_name, getattr(self._modes, method_name))
         self._indicators = IndicatorSubsystem(
@@ -298,6 +298,8 @@ class EditorialApp:
         exm.add_command(label="Tagged Text…", command=self.export_tagged_text)
         fm.add_cascade(label="Export", menu=exm)
         self._export_menu = exm
+        fm.add_separator()
+        fm.add_command(label="Settings…", command=self.show_settings_dialog)
         fm.add_separator()
         fm.add_command(label="Exit",      command=self.quit_app)
         bar.add_cascade(label="File", menu=fm)
@@ -3061,11 +3063,45 @@ class EditorialApp:
         if isinstance(names, str):
             self._pov_names_var.set(names)
 
+        spellcheck_enabled = data.get("spelling_checker_enabled", True)
+        self._spellcheck_active = bool(spellcheck_enabled)
+        self._spellcheck_toggle_var.set(self._spellcheck_active)
+
+        pov_choice = data.get("pov_choice", "All Pronouns (Broad Scan)")
+        if isinstance(pov_choice, str) and pov_choice in POV_PRONOUN_MAP:
+            self._pov_choice.set(pov_choice)
+
+        echo_range = data.get("echo_range", 80)
+        if isinstance(echo_range, (int, float)):
+            int_echo = int(echo_range)
+            self._echo_focus_window_words = int_echo
+            self._echo_slider_var.set(int_echo)
+            if hasattr(self, "_echo_slider_label") and self._echo_slider_label:
+                self._echo_slider_label.config(text=f"Echo Range: {int_echo}")
+
+        pacing_limit = data.get("pacing_limit", 19)
+        if isinstance(pacing_limit, (int, float)):
+            int_pacing = int(pacing_limit)
+            self._pacing_long_words = int_pacing
+            self._pacing_short_words = math.ceil(int_pacing * 0.2)
+            self._pacing_average_words = math.ceil(int_pacing * 0.6)
+            self._pacing_slider_var.set(int_pacing)
+            if hasattr(self, "_pacing_slider_label") and self._pacing_slider_label:
+                self._pacing_slider_label.config(text=f"Pacing Limit: {int_pacing}")
+
+        arch_ignore = data.get("arch_ignore_dialogue", False)
+        self._arch_ignore_dialogue_var.set(bool(arch_ignore))
+
     def _save_user_settings(self) -> None:
         try:
             os.makedirs(os.path.dirname(self._settings_path), exist_ok=True)
             data = {
                 "pov_names": self._pov_names_var.get().strip(),
+                "spelling_checker_enabled": bool(self._spellcheck_active),
+                "pov_choice": self._pov_choice.get(),
+                "echo_range": int(self._echo_focus_window_words),
+                "pacing_limit": int(self._pacing_long_words),
+                "arch_ignore_dialogue": bool(self._arch_ignore_dialogue_var.get()),
             }
             with open(self._settings_path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
@@ -3181,61 +3217,199 @@ class EditorialApp:
 
 
 
-    def show_pov_names_dialog(self) -> None:
-        if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
-            self._pov_names_dialog.deiconify()
-            self._pov_names_dialog.lift()
-            self._pov_names_dialog.focus_force()
+    def show_settings_dialog(self, initial_tab: int = 0) -> None:
+        if hasattr(self, "_settings_dialog") and self._settings_dialog and self._settings_dialog.winfo_exists():
+            self._settings_dialog.deiconify()
+            self._settings_dialog.lift()
+            self._settings_dialog.focus_force()
+            if hasattr(self, "_settings_notebook") and self._settings_notebook:
+                self._settings_notebook.select(initial_tab)
             return
 
         dlg = tk.Toplevel(self.root)
         dlg.withdraw()
-        dlg.title("POV Names")
+        dlg.title("Settings")
         dlg.configure(bg=BG_SURFACE)
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
-        self._pov_names_dialog = dlg
+        self._settings_dialog = dlg
 
-        panel = tk.Frame(dlg, bg=BG_SURFACE, padx=12, pady=12)
-        panel.pack(fill=tk.BOTH, expand=True)
+        # Temporary variables for spellingchecker, mode settings, and POV names
+        temp_spellcheck_active = tk.BooleanVar(value=self._spellcheck_active)
+        temp_custom_words = sorted(list(self._spellcheck_subsystem.custom_dict_words))
+        temp_pov_choice = tk.StringVar(value=self._pov_choice.get())
+        temp_echo_range = tk.IntVar(value=self._echo_focus_window_words)
+        temp_pacing_limit = tk.IntVar(value=self._pacing_long_words)
+        temp_arch_ignore_dialogue = tk.BooleanVar(value=self._arch_ignore_dialogue_var.get())
+        temp_pov_names = tk.StringVar(value=self._pov_names_var.get())
 
-        self._pov_names_edit_var.set(self._pov_names_var.get())
+        # Configure style for TNotebook to match the dark Catppuccin theme
+        style = ttk.Style(self.root)
+        style.configure("Settings.TNotebook", background=BG_SURFACE, borderwidth=0)
+        style.configure(
+            "Settings.TNotebook.Tab",
+            background=BG_OVERLAY,
+            foreground=TEXT,
+            borderwidth=0,
+            padding=[12, 6],
+            font=("Segoe UI", 9, "bold")
+        )
+        style.map(
+            "Settings.TNotebook.Tab",
+            background=[("selected", BG_SURFACE)],
+            foreground=[("selected", ACCENT)]
+        )
 
-        tk.Label(
-            panel,
-            text="POV Character Names (comma-separated)",
+        notebook = ttk.Notebook(dlg, style="Settings.TNotebook")
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self._settings_notebook = notebook
+
+        # ------------------------------------------------------------- Tab 1: Spelling Checker
+        tab_spell = tk.Frame(notebook, bg=BG_SURFACE)
+        notebook.add(tab_spell, text="Spelling Checker")
+
+        chk_spell = tk.Checkbutton(
+            tab_spell,
+            text="Spelling Checker Enabled",
+            variable=temp_spellcheck_active,
             bg=BG_SURFACE,
             fg=TEXT,
+            selectcolor=BG_SURFACE,
+            activebackground=BG_SURFACE,
+            activeforeground=TEXT,
+            font=("Segoe UI", 9, "bold"),
+            bd=0,
+            highlightthickness=0,
+        )
+        chk_spell.pack(anchor="w", padx=15, pady=(15, 10))
+
+        words_frame = tk.Frame(tab_spell, bg=BG_SURFACE)
+        words_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+
+        lbl_words = tk.Label(
+            words_frame,
+            text="Added User Words:",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
             font=("Segoe UI", 9, "bold"),
             anchor="w",
-        ).pack(fill=tk.X)
+        )
+        lbl_words.pack(fill=tk.X, pady=(0, 4))
 
-        tk.Label(
-            panel,
-            text="Example: Nalls, Rauld, Detective",
+        list_container = tk.Frame(words_frame, bg=BG_SURFACE)
+        list_container.pack(fill=tk.BOTH, expand=True)
+
+        list_frame = tk.Frame(list_container, bg=BG)
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(
+            list_frame, bg=BG_SURFACE, troughcolor=BG,
+            activebackground=ACCENT, width=12, relief="flat", bd=0,
+        )
+        listbox = tk.Listbox(
+            list_frame,
+            bg=BG,
+            fg=TEXT,
+            selectbackground=BG_OVERLAY,
+            selectforeground=ACCENT,
+            highlightcolor=ACCENT,
+            highlightbackground=BG_OVERLAY,
+            relief="flat",
+            bd=0,
+            font=("Segoe UI", 9),
+            yscrollcommand=scrollbar.set,
+            width=28,
+            height=10,
+        )
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def update_listbox():
+            listbox.delete(0, tk.END)
+            for w in temp_custom_words:
+                listbox.insert(tk.END, w)
+
+        update_listbox()
+
+        actions_frame = tk.Frame(list_container, bg=BG_SURFACE, padx=10)
+        actions_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        lbl_new_word = tk.Label(
+            actions_frame,
+            text="New Word:",
             bg=BG_SURFACE,
             fg=TEXT_SUBTLE,
             font=("Segoe UI", 9),
             anchor="w",
-        ).pack(fill=tk.X, pady=(2, 8))
+        )
+        lbl_new_word.pack(fill=tk.X, pady=(0, 2))
 
-        entry = tk.Entry(
-            panel,
-            textvariable=self._pov_names_edit_var,
+        add_word_entry = tk.Entry(
+            actions_frame,
             bg=BG,
             fg=TEXT,
             insertbackground=ACCENT,
             relief="flat",
             font=("Segoe UI", 9),
-            width=42,
+            width=18,
         )
-        entry.pack(fill=tk.X)
+        add_word_entry.pack(fill=tk.X, pady=(0, 8))
 
-        btn_row = tk.Frame(panel, bg=BG_SURFACE)
-        btn_row.pack(fill=tk.X, pady=(10, 0))
+        def add_word_action():
+            word = add_word_entry.get().strip().lower()
+            if not word:
+                return
+            if " " in word:
+                messagebox.showerror("Invalid Word", "User words cannot contain spaces.", parent=dlg)
+                return
+            if word in temp_custom_words:
+                messagebox.showinfo("Duplicate Word", f"'{word}' is already in the custom dictionary.", parent=dlg)
+                return
+            temp_custom_words.append(word)
+            temp_custom_words.sort()
+            update_listbox()
+            add_word_entry.delete(0, tk.END)
 
-        bkw = dict(
+        add_word_entry.bind("<Return>", lambda _e: add_word_action())
+
+        btn_add = tk.Button(
+            actions_frame,
+            text="Add Word",
+            command=add_word_action,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        )
+        btn_add.pack(fill=tk.X, pady=(0, 10))
+
+        def remove_word_action():
+            selected = listbox.curselection()
+            if not selected:
+                return
+            index = selected[0]
+            word = listbox.get(index)
+            if word in temp_custom_words:
+                temp_custom_words.remove(word)
+                update_listbox()
+                new_size = len(temp_custom_words)
+                if new_size > 0:
+                    new_idx = min(index, new_size - 1)
+                    listbox.select_set(new_idx)
+                    listbox.activate(new_idx)
+
+        btn_remove = tk.Button(
+            actions_frame,
+            text="Remove Selected",
+            command=remove_word_action,
             bg=BG_OVERLAY,
             fg=TEXT,
             activebackground=ACCENT,
@@ -3247,15 +3421,241 @@ class EditorialApp:
             cursor="hand2",
             font=("Segoe UI", 9),
         )
+        btn_remove.pack(fill=tk.X)
 
-        tk.Button(btn_row, text="Cancel", command=self._cancel_pov_names_dialog, **bkw).pack(side=tk.RIGHT)
-        tk.Button(btn_row, text="Save and Close", command=self._apply_and_close_pov_names_dialog, **bkw).pack(side=tk.RIGHT, padx=(0, 8))
+        # ------------------------------------------------------------- Tab 2: Mode Settings
+        tab_modes = tk.Frame(notebook, bg=BG_SURFACE)
+        notebook.add(tab_modes, text="Mode Settings")
 
-        entry.bind("<Return>", lambda _e: self._apply_and_close_pov_names_dialog())
-        dlg.bind("<Escape>", lambda _e: self._cancel_pov_names_dialog())
-        dlg.protocol("WM_DELETE_WINDOW", self._apply_and_close_pov_names_dialog)
+        # Layout modes as vertical stack with descriptive labels
+        modes_container = tk.Frame(tab_modes, bg=BG_SURFACE, padx=10, pady=10)
+        modes_container.pack(fill=tk.BOTH, expand=True)
+
+        # POV Pronoun Filter Settings
+        sec_pov = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
+        sec_pov.pack(fill=tk.X)
+        tk.Label(
+            sec_pov,
+            text="Filter Words: POV Setting",
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X)
+        combo_pov = ttk.Combobox(
+            sec_pov,
+            state="readonly",
+            values=list(POV_PRONOUN_MAP.keys()),
+            textvariable=temp_pov_choice,
+            width=28,
+        )
+        combo_pov.pack(anchor="w", pady=(4, 0))
+
+        # Echo Radar Range Slider
+        sec_echo = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
+        sec_echo.pack(fill=tk.X)
+        lbl_echo_hdr = tk.Frame(sec_echo, bg=BG_SURFACE)
+        lbl_echo_hdr.pack(fill=tk.X)
+        tk.Label(
+            lbl_echo_hdr,
+            text="Echo Radar: Focus Window Range (Words)",
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(side=tk.LEFT)
+        lbl_echo_val = tk.Label(
+            lbl_echo_hdr,
+            text=str(temp_echo_range.get()),
+            bg=BG_SURFACE,
+            fg=TEXT,
+            font=("Segoe UI", 9, "bold"),
+        )
+        lbl_echo_val.pack(side=tk.RIGHT, padx=5)
+
+        def on_temp_echo_change(val):
+            int_val = int(float(val))
+            lbl_echo_val.config(text=str(int_val))
+            temp_echo_range.set(int_val)
+
+        scale_echo = ttk.Scale(
+            sec_echo,
+            from_=1,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=temp_echo_range,
+            command=on_temp_echo_change,
+            style="Horizontal.TScale",
+        )
+        scale_echo.pack(fill=tk.X, pady=(4, 0))
+
+        # Rhythm & Pacing Limit Slider
+        sec_pacing = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
+        sec_pacing.pack(fill=tk.X)
+        lbl_pacing_hdr = tk.Frame(sec_pacing, bg=BG_SURFACE)
+        lbl_pacing_hdr.pack(fill=tk.X)
+        tk.Label(
+            lbl_pacing_hdr,
+            text="Rhythm & Pacing: Long Sentence Limit (Words)",
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(side=tk.LEFT)
+        lbl_pacing_val = tk.Label(
+            lbl_pacing_hdr,
+            text=str(temp_pacing_limit.get()),
+            bg=BG_SURFACE,
+            fg=TEXT,
+            font=("Segoe UI", 9, "bold"),
+        )
+        lbl_pacing_val.pack(side=tk.RIGHT, padx=5)
+
+        def on_temp_pacing_change(val):
+            int_val = int(float(val))
+            lbl_pacing_val.config(text=str(int_val))
+            temp_pacing_limit.set(int_val)
+
+        scale_pacing = ttk.Scale(
+            sec_pacing,
+            from_=5,
+            to=50,
+            orient=tk.HORIZONTAL,
+            variable=temp_pacing_limit,
+            command=on_temp_pacing_change,
+            style="Horizontal.TScale",
+        )
+        scale_pacing.pack(fill=tk.X, pady=(4, 0))
+
+        # Sentence Architecture Ignore Dialogue Checkbox
+        sec_arch = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
+        sec_arch.pack(fill=tk.X)
+        chk_arch = tk.Checkbutton(
+            sec_arch,
+            text="Sentence Architecture: Ignore Dialogue text during analysis",
+            variable=temp_arch_ignore_dialogue,
+            bg=BG_SURFACE,
+            fg=TEXT,
+            selectcolor=BG_SURFACE,
+            activebackground=BG_SURFACE,
+            activeforeground=TEXT,
+            font=("Segoe UI", 9),
+            bd=0,
+            highlightthickness=0,
+        )
+        chk_arch.pack(anchor="w")
+
+        # ------------------------------------------------------------- Tab 3: POV Names
+        tab_pov = tk.Frame(notebook, bg=BG_SURFACE)
+        notebook.add(tab_pov, text="POV Names")
+
+        pov_panel = tk.Frame(tab_pov, bg=BG_SURFACE, padx=12, pady=12)
+        pov_panel.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            pov_panel,
+            text="POV Character Names (comma-separated)",
+            bg=BG_SURFACE,
+            fg=TEXT,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X)
+
+        tk.Label(
+            pov_panel,
+            text="Example: Nalls, Rauld, Detective",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill=tk.X, pady=(2, 8))
+
+        entry_pov_names = tk.Entry(
+            pov_panel,
+            textvariable=temp_pov_names,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=ACCENT,
+            relief="flat",
+            font=("Segoe UI", 9),
+            width=42,
+        )
+        entry_pov_names.pack(fill=tk.X)
+
+        # ------------------------------------------------------------- Dialog Action Buttons (Save/Cancel)
+        btn_row = tk.Frame(dlg, bg=BG_SURFACE, padx=10, pady=0)
+        btn_row.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 10))
+
+        bkw = dict(
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        )
+
+        def cancel_action():
+            dlg.grab_release()
+            dlg.destroy()
+            self._settings_dialog = None
+
+        def save_action():
+            # 1. Apply Spellchecker
+            self._spellcheck_subsystem.custom_dict_words = set(temp_custom_words)
+            self._spellcheck_subsystem.save_custom_dictionary()
+            self._spellcheck_subsystem.reinit_spellchecker()
+
+            # Enable spelling check if changed
+            self._spellcheck_active = bool(temp_spellcheck_active.get())
+            self._spellcheck_toggle_var.set(self._spellcheck_active)
+            self._toggle_spellcheck()
+
+            # 2. Apply POV choice
+            new_pov = temp_pov_choice.get()
+            self._pov_choice.set(new_pov)
+            self._on_pov_changed()
+
+            # 3. Apply Echo range
+            new_echo = temp_echo_range.get()
+            self._on_echo_range_changed(new_echo)
+            self._echo_slider_var.set(new_echo)
+
+            # 4. Apply Pacing limit
+            new_pacing = temp_pacing_limit.get()
+            self._on_pacing_limit_changed(new_pacing)
+            self._pacing_slider_var.set(new_pacing)
+
+            # 5. Apply Sentence Architecture ignore dialogue
+            new_arch_ignore = temp_arch_ignore_dialogue.get()
+            self._arch_ignore_dialogue_var.set(new_arch_ignore)
+            self._on_arch_ignore_dialogue_changed()
+
+            # 6. Apply POV names
+            self._pov_names_var.set(temp_pov_names.get().strip())
+
+            # Save to configuration JSON
+            self._save_user_settings()
+
+            cancel_action()
+
+        tk.Button(btn_row, text="Cancel", command=cancel_action, **bkw).pack(side=tk.RIGHT)
+        tk.Button(btn_row, text="Save and Close", command=save_action, **bkw).pack(side=tk.RIGHT, padx=(0, 8))
+
+        notebook.select(initial_tab)
+        entry_pov_names.bind("<Return>", lambda _e: save_action())
+        dlg.bind("<Escape>", lambda _e: cancel_action())
+        dlg.protocol("WM_DELETE_WINDOW", cancel_action)
+
         self._center_popup(dlg)
-        entry.focus_set()
+
+    def show_pov_names_dialog(self) -> None:
+        self.show_settings_dialog(initial_tab=2)
+
 
     def _center_popup(self, dlg: tk.Toplevel) -> None:
         dlg.update_idletasks()
@@ -3271,24 +3671,6 @@ class EditorialApp:
         dlg.deiconify()
         dlg.lift()
 
-    def _apply_and_close_pov_names_dialog(self) -> None:
-        new_value = self._pov_names_edit_var.get().strip()
-        self._pov_names_var.set(new_value)
-        self._save_user_settings()
-
-        if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
-            self._pov_names_dialog.grab_release()
-            self._pov_names_dialog.destroy()
-        self._pov_names_dialog = None
-
-        # Apply POV name changes once on close, avoiding per-keystroke reruns.
-        self._rerun_filter_for_pov_change()
-
-    def _cancel_pov_names_dialog(self) -> None:
-        if self._pov_names_dialog and self._pov_names_dialog.winfo_exists():
-            self._pov_names_dialog.grab_release()
-            self._pov_names_dialog.destroy()
-        self._pov_names_dialog = None
 
     def _on_text_configure(self, _event=None) -> None:
         if self._resize_in_progress:

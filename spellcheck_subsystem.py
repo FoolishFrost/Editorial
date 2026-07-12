@@ -30,6 +30,7 @@ class SpellcheckSubsystem:
     """Subsystem class that owns the SpellChecker engine and dictionary files."""
 
     def __init__(self, custom_dict_path: str, local_dict_path: str | None = None) -> None:
+        self.local_dict_path = local_dict_path
         if local_dict_path and os.path.exists(local_dict_path):
             try:
                 self.spellchecker = SpellChecker(language=None, local_dictionary=local_dict_path)
@@ -48,6 +49,24 @@ class SpellcheckSubsystem:
         self.custom_dict_words: set[str] = set()
         self.ignored_words: set[str] = set()
         self.load_custom_dictionary()
+
+    def reinit_spellchecker(self) -> None:
+        """Re-initialize the spellchecker instance to discard removed words."""
+        if self.local_dict_path and os.path.exists(self.local_dict_path):
+            try:
+                self.spellchecker = SpellChecker(language=None, local_dictionary=self.local_dict_path)
+            except Exception:
+                try:
+                    self.spellchecker = SpellChecker(language="en")
+                except Exception:
+                    self.spellchecker = SpellChecker()
+        else:
+            try:
+                self.spellchecker = SpellChecker(language="en")
+            except Exception:
+                self.spellchecker = SpellChecker()
+        self.load_custom_dictionary()
+
 
     def load_custom_dictionary(self) -> None:
         """Load the user's custom dictionary words from file."""

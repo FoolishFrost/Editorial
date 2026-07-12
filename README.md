@@ -3,9 +3,9 @@
 Editorial is a fiction-focused desktop editor built for drafting and revision. it makes no use of AI, LLM, or similar systems. It uses only algorithmic detection to highlight writing patterns, allowing an editor to quickly correct a manuscript of 100,000 words or more. it does not make changes on its own, instead just highlighting possible issues so a skilled edior can work.
 
 ## Downloads
-- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.3.14/Editorial-Setup-1.3.14.exe
-- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.3.14/Editorial-1.3.14-portable.zip
-- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.3.14
+- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.3.17/Editorial-Setup-1.3.17.exe
+- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.3.17/Editorial-1.3.17-portable.zip
+- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.3.17
 
 ## Documentation
 - User manual (Wiki): https://github.com/FoolishFrost/Editorial/wiki

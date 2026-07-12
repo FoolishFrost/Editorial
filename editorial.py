@@ -24,20 +24,14 @@ import threading
 import time
 import math
 import re
-import bisect
-import ctypes
 import subprocess
 import webbrowser
-import pkgutil
-from spellchecker import SpellChecker
-from collections import Counter
 from urllib import error as urlerror
 from urllib import request as urlrequest
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
 from tkinter import ttk
-from spacy.lang.en.stop_words import STOP_WORDS
 
 # Keep local module imports stable when launched from outside workspace root.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,25 +51,14 @@ from filter_analyzer import (
 
 from editorial_export import collect_export_ranges, build_tagged_export, build_rtf_export
 
-def _extract_spellcheck_tokens(content: str) -> list[tuple[str, tuple[int, int]]]:
-    tokens: list[tuple[str, tuple[int, int]]] = []
-    for match in re.finditer(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?", content):
-        word = match.group(0)
-        normalized_word = word.replace("\u2019", "'")
-        if "'" in normalized_word:
-            continue
-        tokens.append((word, match.span()))
-    return tokens
+from spellcheck_subsystem import SpellcheckSubsystem
+from search_subsystem import SearchSubsystem
+from ngram_subsystem import calculate_ngrams
+import formatting_subsystem
+from mode_echo_radar import analyze_echo_radar
 
 
-def _write_spellchecker_dictionary_file(payload: bytes, destination: str) -> str:
-    destination_path = os.path.abspath(destination)
-    directory = os.path.dirname(destination_path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-    with open(destination_path, "wb") as fh:
-        fh.write(gzip.decompress(payload))
-    return destination_path
+
 
 from editorial_config import (
     APP_NAME,
@@ -257,11 +240,7 @@ class EditorialApp:
         self._pacing_viewport_id: int | None = None
         self._arch_hits: list[tuple[int, int, str]] = []
         self._arch_hit_fracs: list[tuple[float, str]] = []
-        self._find_dialog: tk.Toplevel | None = None
-        self._find_var = tk.StringVar()
-        self._replace_var = tk.StringVar()
-        self._last_find_term = ""
-        self._find_index = "1.0"
+        self._search_subsystem = SearchSubsystem(self)
         self._pov_choice = tk.StringVar(value="All Pronouns (Broad Scan)")
         self._pov_names_var = tk.StringVar()
         self._pov_names_dialog: tk.Toplevel | None = None
@@ -296,6 +275,7 @@ class EditorialApp:
         self._bind_shortcuts()
         self.root.bind("<Configure>", self._on_root_configure)
         self._update_status()
+        self._update_word_char_count()
 
     # ------------------------------------------------------------------ menu
 
@@ -505,43 +485,11 @@ class EditorialApp:
                 except Exception:
                     local_dict_path = "dictionary.json"
 
-        if os.path.exists(local_dict_path):
-            try:
-                self._spellchecker = SpellChecker(language=None, local_dictionary=local_dict_path)
-            except Exception:
-                try:
-                    self._spellchecker = SpellChecker(language="en")
-                except Exception:
-                    self._spellchecker = SpellChecker()
-        else:
-            try:
-                self._spellchecker = SpellChecker(language="en")
-            except Exception:
-                self._spellchecker = SpellChecker()
-
-        self._ignored_words: set[str] = set()
         self._custom_dict_path = os.path.join(os.path.dirname(self._settings_path), "custom_dictionary.json")
-        self._custom_dict_words: set[str] = set()
-        self._load_custom_dictionary()
-
-    def _load_custom_dictionary(self) -> None:
-        try:
-            if os.path.exists(self._custom_dict_path):
-                with open(self._custom_dict_path, "r", encoding="utf-8") as fh:
-                    words = json.load(fh)
-                    if isinstance(words, list):
-                        self._custom_dict_words = set(words)
-                        self._spellchecker.word_frequency.load_words(words)
-        except Exception:
-            pass
-
-    def _save_custom_dictionary(self) -> None:
-        try:
-            os.makedirs(os.path.dirname(self._custom_dict_path), exist_ok=True)
-            with open(self._custom_dict_path, "w", encoding="utf-8") as fh:
-                json.dump(list(self._custom_dict_words), fh)
-        except Exception:
-            pass
+        self._spellcheck_subsystem = SpellcheckSubsystem(
+            custom_dict_path=self._custom_dict_path,
+            local_dict_path=local_dict_path
+        )
 
     # --------------------------------------------------------------- toolbar
 
@@ -1092,30 +1040,11 @@ class EditorialApp:
         content = self.text.get("1.0", "end-1c")
 
         def analyze_worker() -> None:
-            if not content.strip():
+            try:
+                misspelled = self._spellcheck_subsystem.check_spelling(content)
+                self.root.after(0, lambda: apply_worker(misspelled))
+            except Exception:
                 self.root.after(0, lambda: apply_worker([]))
-                return
-
-            misspelled = []
-
-            # Simple spellcheck scan
-            # We process words, keep original casing for checking? pyspellchecker works best with lower.
-            # actually we can extract all words and feed them to `spellchecker.unknown`
-            tokens = _extract_spellcheck_tokens(content)
-            words = [word for word, _ in tokens]
-            spans = [span for _, span in tokens]
-
-            # Find unknown words
-            unknown = self._spellchecker.unknown(words)
-            # Remove ignored words (accounting for case)
-            unknown = {w for w in unknown if w.lower() not in self._ignored_words}
-
-            # Map back to spans
-            for i, word in enumerate(words):
-                if word in unknown:
-                    misspelled.append(spans[i])
-
-            self.root.after(0, lambda: apply_worker(misspelled))
 
         def apply_worker(ranges: list[tuple[int, int]]) -> None:
             if run_id != self._spellcheck_run_seq:
@@ -1181,11 +1110,9 @@ class EditorialApp:
         menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
 
         # Get suggestions
-        suggestions = self._spellchecker.candidates(word)
+        suggestions = self._spellcheck_subsystem.get_candidates(word)
         if suggestions:
             # pyspellchecker returns None if no suggestions, or a set
-            # To get better suggestions we could sort by frequency, but the candidates list is generally small.
-            # We'll just show the first 5 of a sorted list.
             for i, suggestion in enumerate(sorted(list(suggestions))[:5]):
                 # Match capitalization
                 if word.istitle():
@@ -1214,14 +1141,11 @@ class EditorialApp:
         menu.tk_popup(event.x_root, event.y_root)
 
     def _add_to_dictionary(self, word: str) -> None:
-        word_lower = word.lower()
-        self._custom_dict_words.add(word_lower)
-        self._spellchecker.word_frequency.load_words([word_lower])
-        self._save_custom_dictionary()
+        self._spellcheck_subsystem.add_to_dictionary(word)
         self._run_spellchecker()
 
     def _ignore_word(self, word: str) -> None:
-        self._ignored_words.add(word.lower())
+        self._spellcheck_subsystem.ignore_word(word)
         self._run_spellchecker()
 
     def _apply_suggestion(self, start: str, end: str, new_text: str) -> None:
@@ -1230,6 +1154,7 @@ class EditorialApp:
             self.text.insert(start, new_text)
             self._mark_active_mode_needs_update()
             self._update_status()
+            self._update_word_char_count()
             self._apply_first_line_indent()
             self._schedule_spellcheck()
         except tk.TclError:
@@ -1479,6 +1404,7 @@ class EditorialApp:
         self.current_file = path
         self._set_title(os.path.basename(path))
         self._update_status()
+        self._update_word_char_count()
         self._redraw_lineno()
         if self._weak_mod_active:
             self.refresh_weak_modifiers()
@@ -1918,18 +1844,6 @@ class EditorialApp:
         pb.pack(fill=tk.X)
         self._center_popup(dlg)
 
-        token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
-
-        # Standard NLP practice: remove function/stop words and short fillers
-        # so frequency outputs emphasize semantically meaningful terms.
-        filler_words = {
-            "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
-            "well", "just", "really", "very", "quite", "actually",
-            "basically", "literally", "perhaps", "maybe",
-        }
-        blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
-        blocked_words.update(filler_words)
-
         def set_progress(val: int) -> None:
             p = max(0, min(100, int(val)))
             pb["value"] = p
@@ -1957,74 +1871,7 @@ class EditorialApp:
 
         def worker() -> None:
             try:
-                # Normalize smart apostrophes so contractions stay intact.
-                ngram_text = text.lower().replace("\u2019", "'")
-                raw_tokens = [m.group(0) for m in token_re.finditer(ngram_text)]
-                tokens = [
-                    tok for tok in raw_tokens
-                    if tok.replace("'", "").isalpha() and len(tok) > 1 and tok not in blocked_words
-                ]
-                total = len(tokens)
-                if total == 0:
-                    self.root.after(0, lambda: finish(None, {"single": [], "pairs": [], "triples": [], "matches": {}}))
-                    return
-
-                self.root.after(0, lambda: set_progress(10))
-                uni: Counter[str] = Counter(tokens)
-
-                self.root.after(0, lambda: set_progress(45))
-                bi: Counter[tuple[str, str]] = Counter(zip(tokens, tokens[1:]))
-
-                self.root.after(0, lambda: set_progress(75))
-                tri: Counter[tuple[str, str, str]] = Counter(zip(tokens, tokens[1:], tokens[2:]))
-
-                top_single = [(w, c) for w, c in uni.most_common(10)]
-                top_pairs = [(" ".join(k), c) for k, c in bi.most_common(10)]
-                top_triples = [(" ".join(k), c) for k, c in tri.most_common(10)]
-
-                # Pre-collect match objects to map tokens to spans
-                filtered_matches = [
-                    m for m in token_re.finditer(ngram_text)
-                    if (tok := m.group(0)).replace("'", "").isalpha() and len(tok) > 1 and tok not in blocked_words
-                ]
-                
-                # Build matches map for top 30
-                matches_map: dict[str, list[tuple[int, int]]] = {}
-                
-                # Single words
-                top_single_set = {w for w, _ in top_single}
-                for w in top_single_set:
-                    matches_map[w] = []
-                for i, m in enumerate(filtered_matches):
-                    w = tokens[i]
-                    if w in top_single_set:
-                        matches_map[w].append((m.start(), m.end()))
-                
-                # Word pairs
-                top_pairs_keys = {k for k, _ in bi.most_common(10)}
-                for k in top_pairs_keys:
-                    matches_map[" ".join(k)] = []
-                for i in range(len(tokens) - 1):
-                    k = (tokens[i], tokens[i+1])
-                    if k in top_pairs_keys:
-                        matches_map[" ".join(k)].append((filtered_matches[i].start(), filtered_matches[i+1].end()))
-                
-                # Word triples
-                top_triples_keys = {k for k, _ in tri.most_common(10)}
-                for k in top_triples_keys:
-                    matches_map[" ".join(k)] = []
-                for i in range(len(tokens) - 2):
-                    k = (tokens[i], tokens[i+1], tokens[i+2])
-                    if k in top_triples_keys:
-                        matches_map[" ".join(k)].append((filtered_matches[i].start(), filtered_matches[i+2].end()))
-
-                result = {
-                    "single": top_single,
-                    "pairs": top_pairs,
-                    "triples": top_triples,
-                    "matches": matches_map,
-                }
-                self.root.after(0, lambda: set_progress(100))
+                result = calculate_ngrams(text, lambda p: self.root.after(0, lambda: set_progress(p)))
                 self.root.after(0, lambda: finish(None, result))
             except Exception as exc:
                 self.root.after(0, lambda: finish(exc, None))
@@ -2152,76 +1999,34 @@ class EditorialApp:
 
     def _convert_to_smart_quotes(self) -> None:
         start, end, text = self._get_text_range()
-        new_text = self._smarten_straight_quotes(text)
+        new_text = formatting_subsystem.convert_to_smart_quotes(text)
         if new_text != text:
             self._replace_text_range(start, end, new_text)
 
     def _convert_to_straight_quotes(self) -> None:
         start, end, text = self._get_text_range()
-        new_text = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+        new_text = formatting_subsystem.convert_to_straight_quotes(text)
         if new_text != text:
             self._replace_text_range(start, end, new_text)
 
     def _convert_ellipses_spaced(self) -> None:
         """Convert all ellipsis formats to standard unspaced three-dots (i.e. '...')."""
         start, end, text = self._get_text_range()
-        # Find ... or .... or more, … and . . .
-        # The goal is to replace with ...
-        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '...', text)
+        new_text = formatting_subsystem.convert_ellipses_spaced(text)
         if new_text != text:
             self._replace_text_range(start, end, new_text)
 
     def _convert_ellipses_char(self) -> None:
         start, end, text = self._get_text_range()
-        # Find ... or .... or more, . . . and replace with …
-        new_text = re.sub(r'(?:\.(?: \.){2,}|\.{3,}|\u2026)', '\u2026', text)
+        new_text = formatting_subsystem.convert_ellipses_char(text)
         if new_text != text:
             self._replace_text_range(start, end, new_text)
 
     def _clean_whitespace(self) -> None:
         start, end, text = self._get_text_range()
-        # Remove trailing spaces
-        new_text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
-        # Collapse multiple spaces into one, including at the beginning of lines
-        new_text = re.sub(r'[ \t]{2,}', ' ', new_text)
+        new_text = formatting_subsystem.clean_whitespace(text)
         if new_text != text:
             self._replace_text_range(start, end, new_text)
-
-    def _smarten_straight_quotes(self, text: str) -> str:
-        # First normalize smart quotes to straight quotes so conversion is deterministic.
-        src = text.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
-        out: list[str] = []
-        open_double = True
-        open_single = True
-
-        for idx, ch in enumerate(src):
-            prev_ch = src[idx - 1] if idx > 0 else ""
-            next_ch = src[idx + 1] if idx + 1 < len(src) else ""
-
-            if ch == '"':
-                if open_double:
-                    out.append("\u201c")
-                else:
-                    out.append("\u201d")
-                open_double = not open_double
-                continue
-
-            if ch == "'":
-                # Apostrophe in words: don't treat as quote pair delimiter.
-                if prev_ch.isalpha() and next_ch.isalpha():
-                    out.append("\u2019")
-                    continue
-
-                if open_single:
-                    out.append("\u2018")
-                else:
-                    out.append("\u2019")
-                open_single = not open_single
-                continue
-
-            out.append(ch)
-
-        return "".join(out)
 
     def _clear_emotion_highlights(self) -> None:
         self.text.tag_remove("emotion_hit", "1.0", tk.END)
@@ -3098,71 +2903,9 @@ class EditorialApp:
 
     def _run_echo_radar_mode(self) -> None:
         def analyze_worker(content: str, progress_cb):
-            if not content.strip():
-                progress_cb(100)
-                return {"ranges": [], "word_counts": {}, "token_hits": [], "groups": {}}
-
-            token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
-            filler_words = {
-                "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
-                "well", "just", "really", "very", "quite", "actually",
-                "basically", "literally", "perhaps", "maybe",
-            }
-            blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
-            blocked_words.update(filler_words)
-
-            tokens: list[tuple[str, int, int, int]] = []
-            total_chars = max(1, len(content))
-            for i, m in enumerate(token_re.finditer(content)):
-                word = m.group(0).lower().replace("\u2019", "'")
-                clean = word.replace("'", "")
-                if clean.isalpha() and len(clean) >= 4 and word not in blocked_words:
-                    tokens.append((word, m.start(), m.end(), len(tokens)))
-                if i % 250 == 0:
-                    progress_cb(int((m.end() / total_chars) * 55))
-
-            if not tokens:
-                progress_cb(100)
-                return {"ranges": [], "word_counts": {}, "token_hits": [], "groups": {}}
-
-            window_words = self._echo_focus_window_words
-            grouped: dict[str, list[tuple[int, int, int]]] = {}
-            for word, start, end, token_idx in tokens:
-                grouped.setdefault(word, []).append((start, end, token_idx))
-
-            filtered_groups: dict[str, list[tuple[int, int, int]]] = {}
-            word_counts: dict[str, int] = {}
-            token_hits: list[tuple[str, int, int, int]] = []
-            total_words = max(1, len(grouped))
-
-            for idx, (word, occurrences) in enumerate(grouped.items()):
-                if len(occurrences) < 2:
-                    continue
-                kept: list[tuple[int, int, int]] = []
-                for i, occ in enumerate(occurrences):
-                    prev_gap = occ[2] - occurrences[i - 1][2] if i > 0 else 999999
-                    next_gap = occurrences[i + 1][2] - occ[2] if i + 1 < len(occurrences) else 999999
-                    if min(prev_gap, next_gap) <= window_words:
-                        kept.append(occ)
-                if len(kept) >= 2:
-                    filtered_groups[word] = kept
-                    word_counts[word] = len(kept)
-                    for start, end, token_idx in kept:
-                        token_hits.append((word, start, end, token_idx))
-                if idx % 40 == 0:
-                    progress_cb(55 + int((idx / total_words) * 40))
-
-            token_hits.sort(key=lambda item: item[1])
-            ranges = [(start, end) for _word, start, end, _idx in token_hits]
-            ranges = self._normalize_ranges(content, ranges)
-
-            progress_cb(100)
-            return {
-                "ranges": ranges,
-                "word_counts": word_counts,
-                "token_hits": token_hits,
-                "groups": filtered_groups,
-            }
+            result = analyze_echo_radar(content, self._echo_focus_window_words, progress_cb)
+            result["ranges"] = self._normalize_ranges(content, result["ranges"])
+            return result
 
         def apply_worker(run_id: int, result: dict[str, object], done) -> None:
             ranges = list(result.get("ranges", []))
@@ -3281,164 +3024,7 @@ class EditorialApp:
         self.text.mark_set(tk.INSERT, "end-1c")
 
     def show_find_dialog(self, show_replace: bool = False) -> None:
-        if self._find_dialog and self._find_dialog.winfo_exists():
-            self._find_dialog.deiconify()
-            self._find_dialog.lift()
-            self._find_dialog.focus_force()
-            self._set_replace_visibility(show_replace)
-            return
-
-        dlg = tk.Toplevel(self.root)
-        dlg.withdraw()
-        dlg.title("Find / Replace")
-        dlg.configure(bg=BG_SURFACE)
-        dlg.resizable(False, False)
-        dlg.transient(self.root)
-        self._find_dialog = dlg
-
-        panel = tk.Frame(dlg, bg=BG_SURFACE, padx=10, pady=10)
-        panel.pack(fill=tk.BOTH, expand=True)
-
-        lkw = dict(bg=BG_SURFACE, fg=TEXT, font=("Segoe UI", 9))
-        ekw = dict(bg=BG, fg=TEXT, insertbackground=ACCENT,
-                   relief="flat", width=34, font=("Segoe UI", 9))
-        bkw = dict(bg=BG_OVERLAY, fg=TEXT,
-                   activebackground=ACCENT, activeforeground=BG,
-                   relief="flat", bd=0, padx=10, pady=4,
-                   cursor="hand2", font=("Segoe UI", 9))
-
-        tk.Label(panel, text="Find", **lkw).grid(row=0, column=0, sticky="w", pady=(0, 6))
-        find_entry = tk.Entry(panel, textvariable=self._find_var, **ekw)
-        find_entry.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(0, 6))
-
-        self._replace_row = tk.Frame(panel, bg=BG_SURFACE)
-        self._replace_row.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(0, 8))
-        tk.Label(self._replace_row, text="Replace", **lkw).grid(row=0, column=0, sticky="w")
-        replace_entry = tk.Entry(self._replace_row, textvariable=self._replace_var, **ekw)
-        replace_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
-        self._replace_row.grid_columnconfigure(1, weight=1)
-
-        self._btn_find_next = tk.Button(panel, text="Find Next", command=self._find_next, **bkw)
-        self._btn_find_next.grid(row=2, column=0, sticky="ew", pady=(0, 2))
-        self._btn_replace = tk.Button(panel, text="Replace", command=self._replace_next, **bkw)
-        self._btn_replace.grid(row=2, column=1, sticky="ew", padx=(6, 0), pady=(0, 2))
-        self._btn_replace_all = tk.Button(panel, text="Replace All", command=self._replace_all, **bkw)
-        self._btn_replace_all.grid(row=2, column=2, sticky="ew", padx=(6, 0), pady=(0, 2))
-        tk.Button(panel, text="Close", command=self._close_find_dialog, **bkw).grid(
-            row=2, column=3, sticky="ew", padx=(6, 0), pady=(0, 2)
-        )
-
-        panel.grid_columnconfigure(3, weight=1)
-
-        find_entry.bind("<Return>", lambda _e: self._find_next())
-        replace_entry.bind("<Return>", lambda _e: self._replace_next())
-        dlg.bind("<Escape>", lambda _e: self._close_find_dialog())
-        dlg.protocol("WM_DELETE_WINDOW", self._close_find_dialog)
-
-        self._set_replace_visibility(show_replace)
-        self._center_popup(dlg)
-        find_entry.focus_set()
-
-    def _set_replace_visibility(self, show_replace: bool) -> None:
-        if show_replace:
-            self._replace_row.grid()
-            self._btn_replace.grid()
-            self._btn_replace_all.grid()
-        else:
-            self._replace_row.grid_remove()
-            self._btn_replace.grid_remove()
-            self._btn_replace_all.grid_remove()
-
-    def _close_find_dialog(self) -> None:
-        self._clear_find_tag()
-        if self._find_dialog and self._find_dialog.winfo_exists():
-            self._find_dialog.destroy()
-        self._find_dialog = None
-
-    def _clear_find_tag(self) -> None:
-        self.text.tag_remove("find_match", "1.0", tk.END)
-
-    def _find_next(self) -> None:
-        needle = self._find_var.get()
-        if not needle:
-            return
-
-        start = self._find_index if needle == self._last_find_term else self.text.index(tk.INSERT)
-        idx = self.text.search(needle, start, stopindex=tk.END, nocase=True)
-        if not idx:
-            idx = self.text.search(needle, "1.0", stopindex=start, nocase=True)
-        if not idx:
-            self.root.bell()
-            return
-
-        end = f"{idx}+{len(needle)}c"
-        self._clear_find_tag()
-        self.text.tag_remove(tk.SEL, "1.0", tk.END)
-        self.text.tag_add("find_match", idx, end)
-        self.text.tag_add(tk.SEL, idx, end)
-        self.text.mark_set(tk.INSERT, end)
-        self.text.see(idx)
-        self._last_find_term = needle
-        self._find_index = end
-
-    def _replace_next(self) -> None:
-        needle = self._find_var.get()
-        if not needle:
-            return
-
-        replaced = False
-        try:
-            sel_start = self.text.index(tk.SEL_FIRST)
-            sel_end = self.text.index(tk.SEL_LAST)
-            selected = self.text.get(sel_start, sel_end)
-            if selected.lower() == needle.lower():
-                replacement = self._replace_var.get()
-                self.text.delete(sel_start, sel_end)
-                self.text.insert(sel_start, replacement)
-                new_end = f"{sel_start}+{len(replacement)}c"
-                self.text.tag_add(tk.SEL, sel_start, new_end)
-                self.text.mark_set(tk.INSERT, new_end)
-                self._find_index = new_end
-                replaced = True
-        except tk.TclError:
-            pass
-
-        if not replaced:
-            self._find_next()
-            return
-
-        self._update_status()
-        self._mark_active_mode_needs_update()
-        self._apply_first_line_indent()
-        self._schedule_spellcheck()
-        self._find_next()
-
-    def _replace_all(self) -> None:
-        needle = self._find_var.get()
-        if not needle:
-            return
-
-        replacement = self._replace_var.get()
-        start = "1.0"
-        count = 0
-
-        while True:
-            idx = self.text.search(needle, start, stopindex=tk.END, nocase=True)
-            if not idx:
-                break
-            end = f"{idx}+{len(needle)}c"
-            self.text.delete(idx, end)
-            self.text.insert(idx, replacement)
-            start = f"{idx}+{len(replacement)}c"
-            count += 1
-
-        self._clear_find_tag()
-        self._find_index = "1.0"
-        self._update_status()
-        self._mark_active_mode_needs_update()
-        self._apply_first_line_indent()
-        self._schedule_spellcheck()
-        messagebox.showinfo("Replace All", f"Replaced {count} occurrence(s).")
+        self._search_subsystem.show_find_dialog(show_replace)
 
     def _get_active_pov_pronouns(self) -> list[str]:
         return POV_PRONOUN_MAP.get(self._pov_choice.get(), POV_PRONOUN_MAP["All Pronouns (Broad Scan)"])
@@ -3896,16 +3482,18 @@ class EditorialApp:
     # ---------------------------------------------------------- status bar
 
     def _update_status(self) -> None:
-        content = self.text.get("1.0", "end-1c")
-        words = len(content.split()) if content.strip() else 0
-        chars = len(content)
-        self._lbl_words.config(text=f"Words: {words}")
-        self._lbl_chars.config(text=f"Chars: {chars}")
         try:
             row, col = self.text.index(tk.INSERT).split(".")
             self._lbl_pos.config(text=f"Ln {row}, Col {int(col) + 1}")
         except Exception:
             pass
+
+    def _update_word_char_count(self) -> None:
+        content = self.text.get("1.0", "end-1c")
+        words = len(content.split()) if content.strip() else 0
+        chars = len(content)
+        self._lbl_words.config(text=f"Words: {words}")
+        self._lbl_chars.config(text=f"Chars: {chars}")
 
     def _set_title(self, name: str) -> None:
         self.root.title(f"{APP_NAME} \u2014 {name}")
@@ -4362,7 +3950,6 @@ class EditorialApp:
 
     def _on_key_release(self, _event=None) -> None:
         self._update_status()
-        self._apply_first_line_indent()
         self._redraw_lineno()
 
         # Schedule spellchecker
@@ -4374,6 +3961,8 @@ class EditorialApp:
             self._skip_filter_schedule_once = False
             return
         if self._should_schedule_filter_for_key(_event):
+            self._update_word_char_count()
+            self._apply_first_line_indent()
             self._mark_active_mode_needs_update()
 
     def _on_copy_event(self, _event=None) -> None:

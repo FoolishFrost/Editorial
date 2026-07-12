@@ -38,3 +38,18 @@ def test_echo_slider_integration() -> None:
 
     # Clean up
     root.destroy()
+
+
+def test_analyze_echo_radar() -> None:
+    from mode_echo_radar import analyze_echo_radar
+    # "quick", "brown", "jumps", "lazy" are non-stop words (length >= 4)
+    content = "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog."
+    
+    # Sensitivity window of 5 words should detect "quick", "brown", etc.
+    res = analyze_echo_radar(content, 5)
+    assert len(res["ranges"]) > 0
+    assert "quick" in res["groups"]
+    
+    # Sensitivity window of 1 word should detect nothing
+    res_small = analyze_echo_radar(content, 1)
+    assert len(res_small["ranges"]) == 0

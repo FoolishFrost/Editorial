@@ -44,31 +44,10 @@ def collect_export_ranges(
     if mode == EDITOR_MODE_ECHO:
         if not app._echo_update_needed and app._echo_hits:
             return sorted([(ws, we, "echo") for ws, we in app._echo_hits], key=lambda x: x[0])
-        token_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
-        filler_words = {
-            "um", "uh", "hmm", "ah", "oh", "okay", "ok", "like",
-            "well", "just", "really", "very", "quite", "actually",
-            "basically", "literally", "perhaps", "maybe",
-        }
-        blocked_words = {w.replace("\u2019", "'") for w in STOP_WORDS}
-        blocked_words.update(filler_words)
-        tokens: list[tuple[str, int, int]] = []
-        for m in token_re.finditer(text):
-            word = m.group(0).lower().replace("\u2019", "'")
-            clean = word.replace("'", "")
-            if not clean.isalpha() or len(clean) < 3 or word in blocked_words:
-                continue
-            tokens.append((word, m.start(), m.end()))
-        last_seen: dict[str, int] = {}
-        flagged: set[int] = set()
-        for idx, (word, _start, _end) in enumerate(tokens):
-            prev = last_seen.get(word)
-            if prev is not None and (idx - prev) <= 300:
-                flagged.add(prev)
-                flagged.add(idx)
-            last_seen[word] = idx
+        from mode_echo_radar import analyze_echo_radar
+        result = analyze_echo_radar(text, app._echo_focus_window_words)
         return sorted(
-            [(tokens[idx][1], tokens[idx][2], "echo") for idx in flagged],
+            [(ws, we, "echo") for ws, we in result["ranges"]],
             key=lambda x: x[0],
         )
     if mode == EDITOR_MODE_DTAG:

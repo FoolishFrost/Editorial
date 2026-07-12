@@ -1,4 +1,4 @@
-from editorial import _extract_spellcheck_tokens
+from spellcheck_subsystem import _extract_spellcheck_tokens
 
 
 def test_extract_spellcheck_tokens_skips_contractions() -> None:

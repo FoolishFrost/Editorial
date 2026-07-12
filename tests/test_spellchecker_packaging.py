@@ -2,7 +2,7 @@ import gzip
 import json
 from pathlib import Path
 
-from editorial import _write_spellchecker_dictionary_file
+from spellcheck_subsystem import _write_spellchecker_dictionary_file
 
 
 def test_write_spellchecker_dictionary_file(tmp_path: Path) -> None:

@@ -106,7 +106,7 @@ class SpellcheckSubsystem:
         """Retrieve potential spelling corrections for a given word."""
         return self.spellchecker.candidates(word)
 
-    def check_spelling(self, content: str) -> list[tuple[int, int]]:
+    def check_spelling(self, content: str, pov_names: set[str] | None = None) -> list[tuple[int, int]]:
         """
         Run spelling check on content, returning lists of spans for misspelled words.
         Optimized by checking only unique lowercase words and filtering out ignored terms.
@@ -122,7 +122,11 @@ class SpellcheckSubsystem:
         spans = [span for _, span in tokens]
 
         # Lowercase and deduplicate spelling candidates to minimize spellchecker lookups
-        unique_words = {w.lower() for w in words if w.lower() not in self.ignored_words}
+        pov_names_lower = {name.lower() for name in pov_names} if pov_names else set()
+        unique_words = {
+            w.lower() for w in words
+            if w.lower() not in self.ignored_words and w.lower() not in pov_names_lower
+        }
 
         unknown_unique = self.spellchecker.unknown(list(unique_words))
 

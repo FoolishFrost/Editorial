@@ -1043,7 +1043,7 @@ class EditorialApp:
 
         def analyze_worker() -> None:
             try:
-                misspelled = self._spellcheck_subsystem.check_spelling(content)
+                misspelled = self._spellcheck_subsystem.check_spelling(content, pov_names=self._get_all_pov_names())
                 self.root.after(0, lambda: apply_worker(misspelled))
             except Exception:
                 self.root.after(0, lambda: apply_worker([]))
@@ -1134,6 +1134,10 @@ class EditorialApp:
         menu.add_command(
             label="Add to dictionary",
             command=lambda w=word: self._add_to_dictionary(w)
+        )
+        menu.add_command(
+            label="Add to POV Names",
+            command=lambda w=word: self._add_to_pov_names(w)
         )
         menu.add_command(
             label="Ignore",
@@ -3116,6 +3120,23 @@ class EditorialApp:
             return set()
         return {name.strip() for name in raw.split(",") if name.strip()}
 
+    def _get_all_pov_names(self) -> set[str]:
+        raw = self._pov_names_var.get().strip()
+        if not raw:
+            return set()
+        return {name.strip() for name in raw.split(",") if name.strip()}
+
+    def _add_to_pov_names(self, word: str) -> None:
+        raw = self._pov_names_var.get().strip()
+        names = [name.strip() for name in raw.split(",") if name.strip()]
+        if word not in names:
+            names.append(word)
+            self._pov_names_var.set(", ".join(names))
+            self._save_user_settings()
+            self._rerun_filter_for_pov_change()
+            self._run_spellchecker()
+
+
     def _rerun_filter_for_pov_change(self) -> None:
         if not self.filter_active:
             return
@@ -3242,7 +3263,7 @@ class EditorialApp:
         temp_echo_range = tk.IntVar(value=self._echo_focus_window_words)
         temp_pacing_limit = tk.IntVar(value=self._pacing_long_words)
         temp_arch_ignore_dialogue = tk.BooleanVar(value=self._arch_ignore_dialogue_var.get())
-        temp_pov_names = tk.StringVar(value=self._pov_names_var.get())
+        temp_pov_names_list = sorted([name.strip() for name in self._pov_names_var.get().split(",") if name.strip()])
 
         # Configure style for TNotebook to match the dark Catppuccin theme
         style = ttk.Style(self.root)
@@ -3431,26 +3452,6 @@ class EditorialApp:
         modes_container = tk.Frame(tab_modes, bg=BG_SURFACE, padx=10, pady=10)
         modes_container.pack(fill=tk.BOTH, expand=True)
 
-        # POV Pronoun Filter Settings
-        sec_pov = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
-        sec_pov.pack(fill=tk.X)
-        tk.Label(
-            sec_pov,
-            text="Filter Words: POV Setting",
-            bg=BG_SURFACE,
-            fg=ACCENT,
-            font=("Segoe UI", 9, "bold"),
-            anchor="w",
-        ).pack(fill=tk.X)
-        combo_pov = ttk.Combobox(
-            sec_pov,
-            state="readonly",
-            values=list(POV_PRONOUN_MAP.keys()),
-            textvariable=temp_pov_choice,
-            width=28,
-        )
-        combo_pov.pack(anchor="w", pady=(4, 0))
-
         # Echo Radar Range Slider
         sec_echo = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
         sec_echo.pack(fill=tk.X)
@@ -3545,42 +3546,169 @@ class EditorialApp:
         )
         chk_arch.pack(anchor="w")
 
-        # ------------------------------------------------------------- Tab 3: POV Names
+        # ------------------------------------------------------------- Tab 3: POV Settings
         tab_pov = tk.Frame(notebook, bg=BG_SURFACE)
-        notebook.add(tab_pov, text="POV Names")
+        notebook.add(tab_pov, text="POV Settings")
 
         pov_panel = tk.Frame(tab_pov, bg=BG_SURFACE, padx=12, pady=12)
         pov_panel.pack(fill=tk.BOTH, expand=True)
 
+        # POV Pronoun Filter Settings (moved from Tab 2)
+        sec_pov = tk.Frame(pov_panel, bg=BG_SURFACE, pady=6)
+        sec_pov.pack(fill=tk.X, pady=(0, 10))
         tk.Label(
-            pov_panel,
-            text="POV Character Names (comma-separated)",
+            sec_pov,
+            text="Filter Words: POV Setting",
             bg=BG_SURFACE,
-            fg=TEXT,
+            fg=ACCENT,
             font=("Segoe UI", 9, "bold"),
             anchor="w",
         ).pack(fill=tk.X)
+        combo_pov = ttk.Combobox(
+            sec_pov,
+            state="readonly",
+            values=list(POV_PRONOUN_MAP.keys()),
+            textvariable=temp_pov_choice,
+            width=28,
+        )
+        combo_pov.pack(anchor="w", pady=(4, 0))
 
-        tk.Label(
+        # POV Character Names List (matching Spelling design)
+        lbl_names = tk.Label(
             pov_panel,
-            text="Example: Nalls, Rauld, Detective",
+            text="POV Character Names:",
+            bg=BG_SURFACE,
+            fg=TEXT_SUBTLE,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        )
+        lbl_names.pack(fill=tk.X, pady=(0, 4))
+
+        names_container = tk.Frame(pov_panel, bg=BG_SURFACE)
+        names_container.pack(fill=tk.BOTH, expand=True)
+
+        names_list_frame = tk.Frame(names_container, bg=BG)
+        names_list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        names_scrollbar = tk.Scrollbar(
+            names_list_frame, bg=BG_SURFACE, troughcolor=BG,
+            activebackground=ACCENT, width=12, relief="flat", bd=0,
+        )
+        names_listbox = tk.Listbox(
+            names_list_frame,
+            bg=BG,
+            fg=TEXT,
+            selectbackground=BG_OVERLAY,
+            selectforeground=ACCENT,
+            highlightcolor=ACCENT,
+            highlightbackground=BG_OVERLAY,
+            relief="flat",
+            bd=0,
+            font=("Segoe UI", 9),
+            yscrollcommand=names_scrollbar.set,
+            width=28,
+            height=8,
+        )
+        names_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        names_scrollbar.config(command=names_listbox.yview)
+        names_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def update_names_listbox():
+            names_listbox.delete(0, tk.END)
+            for name in temp_pov_names_list:
+                names_listbox.insert(tk.END, name)
+
+        update_names_listbox()
+
+        names_actions_frame = tk.Frame(names_container, bg=BG_SURFACE, padx=10)
+        names_actions_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        lbl_new_name = tk.Label(
+            names_actions_frame,
+            text="New Name:",
             bg=BG_SURFACE,
             fg=TEXT_SUBTLE,
             font=("Segoe UI", 9),
             anchor="w",
-        ).pack(fill=tk.X, pady=(2, 8))
+        )
+        lbl_new_name.pack(fill=tk.X, pady=(0, 2))
 
-        entry_pov_names = tk.Entry(
-            pov_panel,
-            textvariable=temp_pov_names,
+        add_name_entry = tk.Entry(
+            names_actions_frame,
             bg=BG,
             fg=TEXT,
             insertbackground=ACCENT,
             relief="flat",
             font=("Segoe UI", 9),
-            width=42,
+            width=18,
         )
-        entry_pov_names.pack(fill=tk.X)
+        add_name_entry.pack(fill=tk.X, pady=(0, 8))
+
+        def add_name_action():
+            name = add_name_entry.get().strip()
+            if not name:
+                return
+            if "," in name:
+                messagebox.showerror("Invalid Name", "POV names cannot contain commas.", parent=dlg)
+                return
+            if name.lower() in [n.lower() for n in temp_pov_names_list]:
+                messagebox.showinfo("Duplicate Name", f"'{name}' is already in the POV names list.", parent=dlg)
+                return
+            temp_pov_names_list.append(name)
+            temp_pov_names_list.sort(key=lambda n: n.lower())
+            update_names_listbox()
+            add_name_entry.delete(0, tk.END)
+
+        add_name_entry.bind("<Return>", lambda _e: add_name_action())
+
+        btn_add_name = tk.Button(
+            names_actions_frame,
+            text="Add Name",
+            command=add_name_action,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        )
+        btn_add_name.pack(fill=tk.X, pady=(0, 10))
+
+        def remove_name_action():
+            selected = names_listbox.curselection()
+            if not selected:
+                return
+            index = selected[0]
+            name = names_listbox.get(index)
+            if name in temp_pov_names_list:
+                temp_pov_names_list.remove(name)
+                update_names_listbox()
+                new_size = len(temp_pov_names_list)
+                if new_size > 0:
+                    new_idx = min(index, new_size - 1)
+                    names_listbox.select_set(new_idx)
+                    names_listbox.activate(new_idx)
+
+        btn_remove_name = tk.Button(
+            names_actions_frame,
+            text="Remove Selected",
+            command=remove_name_action,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        )
+        btn_remove_name.pack(fill=tk.X)
 
         # ------------------------------------------------------------- Dialog Action Buttons (Save/Cancel)
         btn_row = tk.Frame(dlg, bg=BG_SURFACE, padx=10, pady=0)
@@ -3636,7 +3764,7 @@ class EditorialApp:
             self._on_arch_ignore_dialogue_changed()
 
             # 6. Apply POV names
-            self._pov_names_var.set(temp_pov_names.get().strip())
+            self._pov_names_var.set(", ".join(temp_pov_names_list))
 
             # Save to configuration JSON
             self._save_user_settings()
@@ -3647,7 +3775,6 @@ class EditorialApp:
         tk.Button(btn_row, text="Save and Close", command=save_action, **bkw).pack(side=tk.RIGHT, padx=(0, 8))
 
         notebook.select(initial_tab)
-        entry_pov_names.bind("<Return>", lambda _e: save_action())
         dlg.bind("<Escape>", lambda _e: cancel_action())
         dlg.protocol("WM_DELETE_WINDOW", cancel_action)
 

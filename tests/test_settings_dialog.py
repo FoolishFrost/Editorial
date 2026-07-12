@@ -83,7 +83,22 @@ def test_settings_dialog_integration() -> None:
     assert app._pacing_long_words == 25
     assert app._arch_ignore_dialogue_var.get() is True
 
-    # Clean up
+    # 4. Test that names in the POV names list are ignored by spelling checker
+    # "Rauld" should be unknown/misspelled by default (it's not a standard English dictionary word)
+    app._pov_names_var.set("") # Clear POV names
+    misspelled_before = app._spellcheck_subsystem.check_spelling("Rauld", pov_names=app._get_all_pov_names())
+    # Should find "Rauld" misspelled
+    assert len(misspelled_before) == 1
+
+    # Add "Rauld" to POV Names list
+    app._add_to_pov_names("Rauld")
+    assert "Rauld" in app._get_all_pov_names()
+
+    # Verify spellchecker now ignores "Rauld"
+    misspelled_after = app._spellcheck_subsystem.check_spelling("Rauld", pov_names=app._get_all_pov_names())
+    assert len(misspelled_after) == 0
+
+    # Clean up settings file
     if os.path.exists(app._settings_path):
         try:
             os.remove(app._settings_path)

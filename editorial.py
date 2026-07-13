@@ -172,6 +172,7 @@ class EditorialApp:
         self._weak_mod_hits: list[tuple[int, int]] = []
         self._weak_hit_fracs: list[float] = []
         self._spellcheck_hit_fracs: list[float] = []
+        self._spellcheck_confusion_fracs: list[float] = []
         self._emotion_hits: list[tuple[int, int]] = []
         self._emotion_hit_fracs: list[float] = []
         self._echo_hits: list[tuple[int, int]] = []
@@ -1071,6 +1072,7 @@ class EditorialApp:
 
             if not misspelled and not confusions:
                 self._spellcheck_hit_fracs = []
+                self._spellcheck_confusion_fracs = []
                 self._request_density_redraw()
                 return
 
@@ -1113,7 +1115,8 @@ class EditorialApp:
                     self.root.after(1, run_chunk)
                     return
 
-                self._spellcheck_hit_fracs = self._compute_midpoint_fracs(combined_ranges)
+                self._spellcheck_hit_fracs = self._compute_midpoint_fracs(misspelled)
+                self._spellcheck_confusion_fracs = self._compute_midpoint_fracs([(ws, we) for ws, we, _, _ in confusions])
                 self._request_density_redraw()
 
             run_chunk()
@@ -1682,7 +1685,9 @@ class EditorialApp:
         self._clear_filter()
         self._clear_weak_modifiers()
         self.text.tag_remove("misspelled", "1.0", tk.END)
+        self.text.tag_remove("word_confusion", "1.0", tk.END)
         self._spellcheck_hit_fracs = []
+        self._spellcheck_confusion_fracs = []
         self._clear_dialogue_mechanics()
         self._clear_dialogue_tag_highlights()
         self._clear_emotion_highlights()

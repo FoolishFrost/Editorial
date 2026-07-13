@@ -190,8 +190,40 @@ class IndicatorSubsystem:
                 source_fracs = getattr(self.app, "_passive_voice_hit_fracs", [])
                 fill_color = "#f06292" # Passive voice color
             elif getattr(self.app, "_spellcheck_active", False):
-                source_fracs = getattr(self.app, "_spellcheck_hit_fracs", [])
-                fill_color = self.colors["RED_FG"]
+                # Multiple colors for spellchecking heatmap (RED_FG for typos, BLUE_FG for confusions)
+                m_fracs = getattr(self.app, "_spellcheck_hit_fracs", [])
+                c_fracs = getattr(self.app, "_spellcheck_confusion_fracs", [])
+                
+                m_counts = [0 for _ in range(pages)]
+                c_counts = [0 for _ in range(pages)]
+                for frac in m_fracs:
+                    page_idx = min(pages - 1, max(0, int(frac * pages)))
+                    m_counts[page_idx] += 1
+                for frac in c_fracs:
+                    page_idx = min(pages - 1, max(0, int(frac * pages)))
+                    c_counts[page_idx] += 1
+                
+                totals = [m_counts[i] + c_counts[i] for i in range(pages)]
+                max_total = max(totals, default=0)
+                avail_w = max(1, width - 2)
+                
+                for i in range(pages):
+                    y1 = int((i * height) / pages)
+                    y2 = max(y1 + 1, int(((i + 1) * height) / pages))
+                    total = totals[i]
+                    if total <= 0 or max_total <= 0:
+                        continue
+                    
+                    row_w = max(1, int((total / max_total) * avail_w))
+                    red_w = int(row_w * (m_counts[i] / total))
+                    blue_w = row_w - red_w
+                    
+                    x = 1
+                    if red_w > 0:
+                        self.app._density.create_rectangle(x, y1, x + red_w, y2, fill=self.colors["RED_FG"], outline="")
+                        x += red_w
+                    if blue_w > 0:
+                        self.app._density.create_rectangle(x, y1, x + blue_w, y2, fill=self.colors["BLUE_FG"], outline="")
             elif getattr(self.app, "_arch_active", False):
                 # Sentence Architecture: draw a positional color strip
                 # Using vibrant, saturated mid-tones to avoid washing out to white
@@ -239,7 +271,9 @@ class IndicatorSubsystem:
                 source_fracs = []
                 fill_color = self.colors["ACCENT"]
 
-            if not getattr(self.app, "_arch_active", False) and getattr(self.app, "_selected_ngram", None) is None:
+            if (not getattr(self.app, "_arch_active", False) and 
+                not getattr(self.app, "_spellcheck_active", False) and 
+                getattr(self.app, "_selected_ngram", None) is None):
                 page_counts: list[int] = [0 for _ in range(pages)]
                 for frac in source_fracs:
                     page_idx = min(pages - 1, max(0, int(frac * pages)))

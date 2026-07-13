@@ -68,3 +68,12 @@ def test_word_confusion_rules_loading_and_checking() -> None:
         # Should now only find "your welcome"
         assert len(confusions_ignored) == 1
         assert confusions_ignored[0][2] == "you're"
+
+        # Test Case 7: "it's" vs "its" (possessive context)
+        content7 = "tear it's bloody sword"
+        confusions7 = subsystem.check_word_confusion(content7)
+        assert len(confusions7) == 1
+        start, end, suggest, explanation = confusions7[0]
+        assert start == 5
+        assert end == 9
+        assert suggest == "its"

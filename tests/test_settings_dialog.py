@@ -12,6 +12,9 @@ def test_settings_dialog_integration() -> None:
         pytest.skip(f"Tcl/Tk is not available/usable in this environment: {e}")
 
     app = EditorialApp(root)
+    import tempfile
+    temp_dir = tempfile.TemporaryDirectory()
+    app._settings_path = os.path.join(temp_dir.name, "settings.json")
 
     # 1. Verify show_settings_dialog opens the window
     assert not hasattr(app, "_settings_dialog") or app._settings_dialog is None
@@ -103,10 +106,9 @@ def test_settings_dialog_integration() -> None:
     assert len(misspelled_after) == 0
 
     # Clean up settings file
-    if os.path.exists(app._settings_path):
-        try:
-            os.remove(app._settings_path)
-        except Exception:
-            pass
+    try:
+        temp_dir.cleanup()
+    except Exception:
+        pass
 
     root.destroy()

@@ -2,7 +2,7 @@
 ; Build with: ISCC installer\Editorial.iss
 
 #define MyAppName "Editorial"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "Foolish Designs"
 #define MyAppCreator "John Bowden"
 #define MyAppSupportEmail "johnbowden@foolishdesigns.com"
@@ -45,6 +45,7 @@ Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\dictionary.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\cliches.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\redundancies.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\word_confusions.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\help\*"; DestDir: "{app}\help"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -53,6 +54,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
 
 
 

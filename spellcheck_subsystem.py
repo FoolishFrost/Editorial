@@ -3,6 +3,7 @@ import json
 import re
 import gzip
 from spellchecker import SpellChecker
+from analysis_utils import _get_base_dir
 
 
 def _write_spellchecker_dictionary_file(payload: bytes, destination: str) -> str:
@@ -48,7 +49,9 @@ class SpellcheckSubsystem:
         self.custom_dict_path = os.path.abspath(custom_dict_path)
         self.custom_dict_words: set[str] = set()
         self.ignored_words: set[str] = set()
+        self.ignored_confusions: set[tuple[int, int]] = set()
         self.load_custom_dictionary()
+        self.load_word_confusions()
 
     def reinit_spellchecker(self) -> None:
         """Re-initialize the spellchecker instance to discard removed words."""
@@ -136,3 +139,120 @@ class SpellcheckSubsystem:
                 misspelled.append(spans[i])
 
         return misspelled
+
+    def load_word_confusions(self) -> None:
+        self.confusion_rules = []
+        path = os.path.join(_get_base_dir(), "word_confusions.json")
+        try:
+            if not os.path.exists(path):
+                default_rules = [
+                    {
+                        "id": "its_verb",
+                        "trigger": "its",
+                        "pattern": "\\bits\\s+(is|was|has|had|been|a|an|the|very|not|only)\\b",
+                        "suggest": "it's",
+                        "explanation": "'it's' is a contraction of 'it is' or 'it has'; 'its' is possessive."
+                    },
+                    {
+                        "id": "its_participle",
+                        "trigger": "its",
+                        "pattern": "\\bits\\s+[a-z]+ing\\b",
+                        "suggest": "it's",
+                        "explanation": "Usually followed by a participle (e.g., 'it's raining'). Use 'it's'."
+                    },
+                    {
+                        "id": "your_adjective",
+                        "trigger": "your",
+                        "pattern": "\\byour\\s+(welcome|going|right|correct|sure|late|very|too|so|coming|eating|waiting|doing)\\b",
+                        "suggest": "you're",
+                        "explanation": "'you're' means 'you are'; 'your' is possessive."
+                    },
+                    {
+                        "id": "theyre_noun",
+                        "trigger": "they're",
+                        "pattern": "\\bthey're\\s+(car|house|dog|cat|parents|kids|son|daughter|friend|friends|idea|problem|job|book)\\b",
+                        "suggest": "their",
+                        "explanation": "'their' is possessive; 'they're' is a contraction of 'they are'."
+                    },
+                    {
+                        "id": "their_verb",
+                        "trigger": "their",
+                        "pattern": "\\btheir\\s+(is|was|are|were|going|coming|doing|having|ready|very|too|so|not|here|there)\\b",
+                        "suggest": "they're",
+                        "explanation": "'they're' means 'they are'; 'their' is possessive."
+                    },
+                    {
+                        "id": "there_possessive",
+                        "trigger": "there",
+                        "pattern": "\\bthere\\s+(car|house|dog|cat|parents|kids|son|daughter|friend|friends|idea|problem|job|book)\\b",
+                        "suggest": "their",
+                        "explanation": "'their' is possessive; 'there' indicates location."
+                    },
+                    {
+                        "id": "then_comparative",
+                        "trigger": "then",
+                        "pattern": "\\b(more|less|better|worse|bigger|smaller|faster|slower|rather|other|older|younger)\\s+then\\b",
+                        "suggest": "than",
+                        "explanation": "Use 'than' for comparisons (e.g., 'more than'); 'then' indicates time/sequence."
+                    },
+                    {
+                        "id": "loose_verb",
+                        "trigger": "loose",
+                        "pattern": "\\b(don't|did|do|will|would|can|could|might|to)\\s+loose\\b",
+                        "suggest": "lose",
+                        "explanation": "'lose' is a verb (to misplace/fail); 'loose' is an adjective (not tight)."
+                    },
+                    {
+                        "id": "passed_motion",
+                        "trigger": "passed",
+                        "pattern": "\\b(walked|ran|drove|flew|sprinted|walk|run|drive|fly|sprint|hurried|went|go|came|come)\\s+passed\\b",
+                        "suggest": "past",
+                        "explanation": "Use 'past' as a preposition of direction (e.g., 'walked past me'); 'passed' is the past tense of 'to pass'."
+                    }
+                ]
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(default_rules, fh, indent=2)
+            
+            with open(path, "r", encoding="utf-8") as fh:
+                rules = json.load(fh)
+                for r in rules:
+                    r["re"] = re.compile(r["pattern"], re.IGNORECASE)
+                    self.confusion_rules.append(r)
+        except Exception:
+            pass
+
+    def check_word_confusion(self, content: str) -> list[tuple[int, int, str, str]]:
+        if not content.strip() or not hasattr(self, "confusion_rules") or not self.confusion_rules:
+            return []
+
+        matches = []
+        for rule in self.confusion_rules:
+            for match in rule["re"].finditer(content):
+                start, end = match.span()
+                matched_text = match.group(0)
+                trigger = rule["trigger"]
+                trigger_match = re.search(r"\b" + re.escape(trigger) + r"\b", matched_text, re.IGNORECASE)
+                if trigger_match:
+                    t_start = start + trigger_match.start()
+                    t_end = start + trigger_match.end()
+                else:
+                    t_start, t_end = start, end
+                
+                if (t_start, t_end) in self.ignored_confusions:
+                    continue
+                
+                matches.append((t_start, t_end, rule["suggest"], rule["explanation"]))
+        
+        matches.sort(key=lambda x: x[0])
+        
+        resolved = []
+        last_end = -1
+        for start, end, suggest, explanation in matches:
+            if start >= last_end:
+                resolved.append((start, end, suggest, explanation))
+                last_end = end
+        
+        return resolved
+
+    def ignore_confusion(self, start: int, end: int) -> None:
+        self.ignored_confusions.add((start, end))

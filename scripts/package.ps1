@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.4.0"
+    [string]$Version = "1.4.1"
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -27,9 +27,10 @@ if (-not (Test-Path $distDict)) {
     Write-Warning "Could not extract dictionary.json from spellchecker"
 }
 
-# Copy cliches.txt, redundancies.txt, and help/ directory to dist/
+# Copy cliches.txt, redundancies.txt, word_confusions.json, and help/ directory to dist/
 Copy-Item -Path (Join-Path $repo "cliches.txt") -Destination (Join-Path $repo "dist\cliches.txt") -Force
 Copy-Item -Path (Join-Path $repo "redundancies.txt") -Destination (Join-Path $repo "dist\redundancies.txt") -Force
+Copy-Item -Path (Join-Path $repo "word_confusions.json") -Destination (Join-Path $repo "dist\word_confusions.json") -Force
 if (Test-Path (Join-Path $repo "dist\help")) {
     Remove-Item -Path (Join-Path $repo "dist\help") -Recurse -Force
 }
@@ -59,6 +60,10 @@ if (Test-Path $distCliches) {
 $distRedundancies = Join-Path $repo "dist\redundancies.txt"
 if (Test-Path $distRedundancies) {
     Copy-Item -Path $distRedundancies -Destination (Join-Path $portableStage "redundancies.txt") -Force
+}
+$distConfusions = Join-Path $repo "dist\word_confusions.json"
+if (Test-Path $distConfusions) {
+    Copy-Item -Path $distConfusions -Destination (Join-Path $portableStage "word_confusions.json") -Force
 }
 if (Test-Path (Join-Path $portableStage "help")) {
     Remove-Item -Path (Join-Path $portableStage "help") -Recurse -Force

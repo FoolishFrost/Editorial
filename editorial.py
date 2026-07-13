@@ -250,6 +250,8 @@ class EditorialApp:
         self._spellcheck_active: bool = False
         self._spellcheck_run_seq: int = 0
         self._spellcheck_job: str | None = None
+        self._highlight_word_confusions: bool = True
+        self._spellcheck_confusions: list[tuple[int, int, str, str]] = []
         self._settings_path = self._get_settings_path()
         self._load_user_settings()
         self._modes = ModeSubsystem(self)
@@ -955,6 +957,11 @@ class EditorialApp:
             foreground=RED_FG,
         )
         self.text.tag_configure(
+            "word_confusion",
+            underline=1,
+            foreground=BLUE_FG,
+        )
+        self.text.tag_configure(
             "dialogue_tag",
             background=ORANGE_BG,
             foreground=ORANGE_FG,
@@ -1046,44 +1053,68 @@ class EditorialApp:
         def analyze_worker() -> None:
             try:
                 misspelled = self._spellcheck_subsystem.check_spelling(content, pov_names=self._get_all_pov_names())
-                self.root.after(0, lambda: apply_worker(misspelled))
+                if self._highlight_word_confusions:
+                    confusions = self._spellcheck_subsystem.check_word_confusion(content)
+                else:
+                    confusions = []
+                self.root.after(0, lambda: apply_worker(misspelled, confusions))
             except Exception:
-                self.root.after(0, lambda: apply_worker([]))
+                self.root.after(0, lambda: apply_worker([], []))
 
-        def apply_worker(ranges: list[tuple[int, int]]) -> None:
+        def apply_worker(misspelled: list[tuple[int, int]], confusions: list[tuple[int, int, str, str]]) -> None:
             if run_id != self._spellcheck_run_seq:
                 return
 
+            self._spellcheck_confusions = confusions
             self.text.tag_remove("misspelled", "1.0", tk.END)
+            self.text.tag_remove("word_confusion", "1.0", tk.END)
 
-            if not ranges:
+            if not misspelled and not confusions:
                 self._spellcheck_hit_fracs = []
                 self._request_density_redraw()
                 return
 
-            # Apply tags in chunks
-            total = len(ranges)
-            idx = 0
+            total_m = len(misspelled)
+            total_c = len(confusions)
+            combined_ranges = list(misspelled) + [(ws, we) for ws, we, _, _ in confusions]
+
+            idx_m = 0
+            idx_c = 0
             step = 600
 
             def run_chunk() -> None:
-                nonlocal idx
+                nonlocal idx_m, idx_c
                 if run_id != self._spellcheck_run_seq:
                     return
-                end = min(total, idx + step)
-                flat_args = []
-                for ws, we in ranges[idx:end]:
-                    if we > ws:
-                        flat_args.append(f"1.0 + {ws}c")
-                        flat_args.append(f"1.0 + {we}c")
-                if flat_args:
-                    self.text.tk.call(self.text._w, "tag", "add", "misspelled", *flat_args)
-                idx = end
-                if idx < total:
+
+                if idx_m < total_m:
+                    end_m = min(total_m, idx_m + step)
+                    flat_args = []
+                    for ws, we in misspelled[idx_m:end_m]:
+                        if we > ws:
+                            flat_args.append(f"1.0 + {ws}c")
+                            flat_args.append(f"1.0 + {we}c")
+                    if flat_args:
+                        self.text.tk.call(self.text._w, "tag", "add", "misspelled", *flat_args)
+                    idx_m = end_m
                     self.root.after(1, run_chunk)
-                else:
-                    self._spellcheck_hit_fracs = self._compute_midpoint_fracs(ranges)
-                    self._request_density_redraw()
+                    return
+
+                if idx_c < total_c:
+                    end_c = min(total_c, idx_c + step)
+                    flat_args = []
+                    for ws, we, _, _ in confusions[idx_c:end_c]:
+                        if we > ws:
+                            flat_args.append(f"1.0 + {ws}c")
+                            flat_args.append(f"1.0 + {we}c")
+                    if flat_args:
+                        self.text.tk.call(self.text._w, "tag", "add", "word_confusion", *flat_args)
+                    idx_c = end_c
+                    self.root.after(1, run_chunk)
+                    return
+
+                self._spellcheck_hit_fracs = self._compute_midpoint_fracs(combined_ranges)
+                self._request_density_redraw()
 
             run_chunk()
 
@@ -1096,62 +1127,93 @@ class EditorialApp:
         except tk.TclError:
             return
 
-        if "misspelled" not in tags:
-            return
+        if "misspelled" in tags:
+            # Get the word span
+            # Use tag ranges to accurately capture the word including apostrophes
+            prev_range = self.text.tag_prevrange("misspelled", f"{index} wordend")
+            if not prev_range:
+                return
 
-        # Get the word span
-        # Use tag ranges to accurately capture the word including apostrophes
-        prev_range = self.text.tag_prevrange("misspelled", f"{index} wordend")
-        if not prev_range:
-            return
+            word_start, word_end = prev_range
+            # Double check the click is within the tag bounds
+            if self.text.compare(index, "<", word_start) or self.text.compare(index, ">=", word_end):
+                return
 
-        word_start, word_end = prev_range
-        # Double check the click is within the tag bounds
-        if self.text.compare(index, "<", word_start) or self.text.compare(index, ">=", word_end):
-            return
+            word = self.text.get(word_start, word_end)
 
-        word = self.text.get(word_start, word_end)
+            # If it's empty or doesn't match our regex, maybe it's punctuation.
+            if not re.match(r"^[A-Za-z]+(?:'[A-Za-z]+)?$", word):
+                return
 
-        # If it's empty or doesn't match our regex, maybe it's punctuation.
-        if not re.match(r"^[A-Za-z]+(?:'[A-Za-z]+)?$", word):
-            return
+            menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
 
-        menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
+            # Get suggestions
+            suggestions = self._spellcheck_subsystem.get_candidates(word)
+            if suggestions:
+                # pyspellchecker returns None if no suggestions, or a set
+                for i, suggestion in enumerate(sorted(list(suggestions))[:5]):
+                    # Match capitalization
+                    if word.istitle():
+                        suggestion = suggestion.title()
+                    elif word.isupper():
+                        suggestion = suggestion.upper()
 
-        # Get suggestions
-        suggestions = self._spellcheck_subsystem.get_candidates(word)
-        if suggestions:
-            # pyspellchecker returns None if no suggestions, or a set
-            for i, suggestion in enumerate(sorted(list(suggestions))[:5]):
-                # Match capitalization
-                if word.istitle():
-                    suggestion = suggestion.title()
-                elif word.isupper():
-                    suggestion = suggestion.upper()
+                    menu.add_command(
+                        label=suggestion,
+                        command=lambda s=suggestion: self._apply_suggestion(word_start, word_end, s)
+                    )
+                menu.add_separator()
+            else:
+                menu.add_command(label="(No spelling suggestions)", state="disabled")
+                menu.add_separator()
 
-                menu.add_command(
-                    label=suggestion,
-                    command=lambda s=suggestion: self._apply_suggestion(word_start, word_end, s)
-                )
+            menu.add_command(
+                label="Add to dictionary",
+                command=lambda w=word: self._add_to_dictionary(w)
+            )
+            menu.add_command(
+                label="Add to POV Names",
+                command=lambda w=word: self._add_to_pov_names(w)
+            )
+            menu.add_command(
+                label="Ignore",
+                command=lambda w=word: self._ignore_word(w)
+            )
+
+            menu.tk_popup(event.x_root, event.y_root)
+
+        elif "word_confusion" in tags:
+            try:
+                char_idx = int(self.text.count("1.0", index, "chars")[0])
+            except Exception:
+                return
+
+            found_confusion = None
+            for ws, we, suggest, explanation in self._spellcheck_confusions:
+                if ws <= char_idx < we:
+                    found_confusion = (ws, we, suggest, explanation)
+                    break
+
+            if not found_confusion:
+                return
+
+            ws, we, suggest, explanation = found_confusion
+            word_start = f"1.0 + {ws}c"
+            word_end = f"1.0 + {we}c"
+
+            menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
+            menu.add_command(
+                label=f"Did you mean '{suggest}'?",
+                command=lambda s=suggest: self._apply_suggestion(word_start, word_end, s)
+            )
             menu.add_separator()
-        else:
-            menu.add_command(label="(No spelling suggestions)", state="disabled")
+            menu.add_command(label=explanation, state="disabled")
             menu.add_separator()
-
-        menu.add_command(
-            label="Add to dictionary",
-            command=lambda w=word: self._add_to_dictionary(w)
-        )
-        menu.add_command(
-            label="Add to POV Names",
-            command=lambda w=word: self._add_to_pov_names(w)
-        )
-        menu.add_command(
-            label="Ignore",
-            command=lambda w=word: self._ignore_word(w)
-        )
-
-        menu.tk_popup(event.x_root, event.y_root)
+            menu.add_command(
+                label="Ignore this check",
+                command=lambda s=ws, e=we: self._ignore_confusion(s, e)
+            )
+            menu.tk_popup(event.x_root, event.y_root)
 
     def _add_to_dictionary(self, word: str) -> None:
         self._spellcheck_subsystem.add_to_dictionary(word)
@@ -1159,6 +1221,10 @@ class EditorialApp:
 
     def _ignore_word(self, word: str) -> None:
         self._spellcheck_subsystem.ignore_word(word)
+        self._run_spellchecker()
+
+    def _ignore_confusion(self, start: int, end: int) -> None:
+        self._spellcheck_subsystem.ignore_confusion(start, end)
         self._run_spellchecker()
 
     def _apply_suggestion(self, start: str, end: str, new_text: str) -> None:
@@ -3084,6 +3150,8 @@ class EditorialApp:
         if isinstance(names, str):
             self._pov_names_var.set(names)
 
+        highlight_confusions = data.get("highlight_word_confusions", True)
+        self._highlight_word_confusions = bool(highlight_confusions)
 
         pov_choice = data.get("pov_choice", "All Pronouns (Broad Scan)")
         if isinstance(pov_choice, str) and pov_choice in POV_PRONOUN_MAP:
@@ -3119,6 +3187,7 @@ class EditorialApp:
                 "echo_range": int(self._echo_focus_window_words),
                 "pacing_limit": int(self._pacing_long_words),
                 "arch_ignore_dialogue": bool(self._arch_ignore_dialogue_var.get()),
+                "highlight_word_confusions": bool(self._highlight_word_confusions),
             }
             with open(self._settings_path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
@@ -3301,6 +3370,22 @@ class EditorialApp:
         # ------------------------------------------------------------- Tab 1: Spelling Checker
         tab_spell = tk.Frame(notebook, bg=BG_SURFACE)
         notebook.add(tab_spell, text="Spelling Checker")
+
+        temp_highlight_confusions = tk.BooleanVar(value=self._highlight_word_confusions)
+        chk_confusions = tk.Checkbutton(
+            tab_spell,
+            text="Highlight common word confusions (e.g. its/it's, your/you're)",
+            variable=temp_highlight_confusions,
+            bg=BG_SURFACE,
+            fg=TEXT,
+            selectcolor=BG_SURFACE,
+            activebackground=BG_SURFACE,
+            activeforeground=TEXT,
+            font=("Segoe UI", 9, "bold"),
+            bd=0,
+            highlightthickness=0,
+        )
+        chk_confusions.pack(anchor="w", padx=15, pady=(15, 10))
 
         words_frame = tk.Frame(tab_spell, bg=BG_SURFACE)
         words_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
@@ -3734,6 +3819,7 @@ class EditorialApp:
             self._spellcheck_subsystem.custom_dict_words = set(temp_custom_words)
             self._spellcheck_subsystem.save_custom_dictionary()
             self._spellcheck_subsystem.reinit_spellchecker()
+            self._highlight_word_confusions = bool(temp_highlight_confusions.get())
             if self._spellcheck_active:
                 self._run_spellchecker()
 

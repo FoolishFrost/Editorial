@@ -9,7 +9,7 @@
   {
     "id": "its_participle",
     "trigger": "its",
-    "pattern": "\\bits\\s+[a-z]+ing\\b",
+    "pattern": "\\bits\\s+[a-z]+ing(?:\\s+(?:at|on|in|to|for|with|by|from|of|about|up|down|out|away|here|there|now|then|again|too|very|so|already|outside|inside|me|you|him|her|us|them|it|a|an|the|not)\\b|(?=\\s*[,.!?;:\\-—\\)]|$))",
     "suggest": "it's",
     "explanation": "Usually followed by a participle (e.g., 'it's raining'). Use 'it's'."
   },

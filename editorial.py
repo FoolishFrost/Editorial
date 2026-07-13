@@ -107,6 +107,7 @@ from editorial_config import (
     EDITOR_MODE_REDUNDANCY,
     EDITOR_MODE_PASSIVE,
     EDITOR_MODE_ARCH,
+    EDITOR_MODE_SPELL,
     EDITOR_MODES,
     ARCH_TAG_STYLES,
     ARCH_EXPORT_LABELS,
@@ -170,6 +171,7 @@ class EditorialApp:
         self._label_to_mode = {label: value for label, value in EDITOR_MODES}
         self._weak_mod_hits: list[tuple[int, int]] = []
         self._weak_hit_fracs: list[float] = []
+        self._spellcheck_hit_fracs: list[float] = []
         self._emotion_hits: list[tuple[int, int]] = []
         self._emotion_hit_fracs: list[float] = []
         self._echo_hits: list[tuple[int, int]] = []
@@ -245,10 +247,9 @@ class EditorialApp:
         self._pov_names_var = tk.StringVar()
         self._pov_names_dialog: tk.Toplevel | None = None
         self._pov_names_edit_var = tk.StringVar()
-        self._spellcheck_active: bool = True
+        self._spellcheck_active: bool = False
         self._spellcheck_run_seq: int = 0
         self._spellcheck_job: str | None = None
-        self._spellcheck_toggle_var = tk.BooleanVar(value=True)
         self._settings_path = self._get_settings_path()
         self._load_user_settings()
         self._modes = ModeSubsystem(self)
@@ -439,12 +440,13 @@ class EditorialApp:
             command=self._on_tools_mode_selected,
         )
         self._tools_mode_entries.append((int(tm.index("end")), "Sentence Architecture", EDITOR_MODE_ARCH))
-        tm.add_separator()
-        tm.add_checkbutton(
+        tm.add_radiobutton(
             label="Spelling Checker",
-            variable=self._spellcheck_toggle_var,
-            command=self._toggle_spellcheck,
+            variable=self._editor_mode_var,
+            value=EDITOR_MODE_SPELL,
+            command=self._on_tools_mode_selected,
         )
+        self._tools_mode_entries.append((int(tm.index("end")), "Spelling Checker", EDITOR_MODE_SPELL))
         tm.add_separator()
         tm.add_command(label="Refresh", command=self._on_filter_refresh_clicked)
         self._tools_refresh_index = int(tm.index("end"))
@@ -1055,6 +1057,8 @@ class EditorialApp:
             self.text.tag_remove("misspelled", "1.0", tk.END)
 
             if not ranges:
+                self._spellcheck_hit_fracs = []
+                self._request_density_redraw()
                 return
 
             # Apply tags in chunks
@@ -1077,6 +1081,9 @@ class EditorialApp:
                 idx = end
                 if idx < total:
                     self.root.after(1, run_chunk)
+                else:
+                    self._spellcheck_hit_fracs = self._compute_midpoint_fracs(ranges)
+                    self._request_density_redraw()
 
             run_chunk()
 
@@ -1489,6 +1496,7 @@ class EditorialApp:
             or getattr(self, "_redundancy_active", False)
             or getattr(self, "_passive_voice_active", False)
             or getattr(self, "_arch_active", False)
+            or getattr(self, "_spellcheck_active", False)
             or (self._analysis_visible and getattr(self, "_selected_ngram", None) is not None)
         )
 
@@ -1603,9 +1611,12 @@ class EditorialApp:
         self._redundancy_active = False
         self._passive_voice_active = False
         self._arch_active = False
+        self._spellcheck_active = False
 
         self._clear_filter()
         self._clear_weak_modifiers()
+        self.text.tag_remove("misspelled", "1.0", tk.END)
+        self._spellcheck_hit_fracs = []
         self._clear_dialogue_mechanics()
         self._clear_dialogue_tag_highlights()
         self._clear_emotion_highlights()
@@ -1697,6 +1708,12 @@ class EditorialApp:
             self._show_density_band()
             self._arch_active = True
             self._run_arch_mode()
+            return
+
+        if mode == EDITOR_MODE_SPELL:
+            self._show_density_band()
+            self._spellcheck_active = True
+            self._run_spellchecker()
             return
 
     def save_file(self) -> None:
@@ -3067,9 +3084,6 @@ class EditorialApp:
         if isinstance(names, str):
             self._pov_names_var.set(names)
 
-        spellcheck_enabled = data.get("spelling_checker_enabled", True)
-        self._spellcheck_active = bool(spellcheck_enabled)
-        self._spellcheck_toggle_var.set(self._spellcheck_active)
 
         pov_choice = data.get("pov_choice", "All Pronouns (Broad Scan)")
         if isinstance(pov_choice, str) and pov_choice in POV_PRONOUN_MAP:
@@ -3101,7 +3115,6 @@ class EditorialApp:
             os.makedirs(os.path.dirname(self._settings_path), exist_ok=True)
             data = {
                 "pov_names": self._pov_names_var.get().strip(),
-                "spelling_checker_enabled": bool(self._spellcheck_active),
                 "pov_choice": self._pov_choice.get(),
                 "echo_range": int(self._echo_focus_window_words),
                 "pacing_limit": int(self._pacing_long_words),
@@ -3257,7 +3270,6 @@ class EditorialApp:
         self._settings_dialog = dlg
 
         # Temporary variables for spellingchecker, mode settings, and POV names
-        temp_spellcheck_active = tk.BooleanVar(value=self._spellcheck_active)
         temp_custom_words = sorted(list(self._spellcheck_subsystem.custom_dict_words))
         temp_pov_choice = tk.StringVar(value=self._pov_choice.get())
         temp_echo_range = tk.IntVar(value=self._echo_focus_window_words)
@@ -3289,21 +3301,6 @@ class EditorialApp:
         # ------------------------------------------------------------- Tab 1: Spelling Checker
         tab_spell = tk.Frame(notebook, bg=BG_SURFACE)
         notebook.add(tab_spell, text="Spelling Checker")
-
-        chk_spell = tk.Checkbutton(
-            tab_spell,
-            text="Spelling Checker Enabled",
-            variable=temp_spellcheck_active,
-            bg=BG_SURFACE,
-            fg=TEXT,
-            selectcolor=BG_SURFACE,
-            activebackground=BG_SURFACE,
-            activeforeground=TEXT,
-            font=("Segoe UI", 9, "bold"),
-            bd=0,
-            highlightthickness=0,
-        )
-        chk_spell.pack(anchor="w", padx=15, pady=(15, 10))
 
         words_frame = tk.Frame(tab_spell, bg=BG_SURFACE)
         words_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
@@ -3737,11 +3734,8 @@ class EditorialApp:
             self._spellcheck_subsystem.custom_dict_words = set(temp_custom_words)
             self._spellcheck_subsystem.save_custom_dictionary()
             self._spellcheck_subsystem.reinit_spellchecker()
-
-            # Enable spelling check if changed
-            self._spellcheck_active = bool(temp_spellcheck_active.get())
-            self._spellcheck_toggle_var.set(self._spellcheck_active)
-            self._toggle_spellcheck()
+            if self._spellcheck_active:
+                self._run_spellchecker()
 
             # 2. Apply POV choice
             new_pov = temp_pov_choice.get()

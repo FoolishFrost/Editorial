@@ -3,6 +3,7 @@ import pytest
 import os
 import json
 from editorial import EditorialApp
+from editorial_config import EDITOR_MODE_SPELL, EDITOR_MODE_OFF
 
 def test_settings_dialog_integration() -> None:
     try:
@@ -46,7 +47,6 @@ def test_settings_dialog_integration() -> None:
 
     # Change settings
     app._pov_names_var.set("RAULD, DETECTIVE")
-    app._spellcheck_active = False
     app._pov_choice.set("First Person (I/We)")
     app._echo_focus_window_words = 50
     app._pacing_long_words = 25
@@ -59,7 +59,6 @@ def test_settings_dialog_integration() -> None:
     with open(app._settings_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
         assert data["pov_names"] == "RAULD, DETECTIVE"
-        assert data["spelling_checker_enabled"] is False
         assert data["pov_choice"] == "First Person (I/We)"
         assert data["echo_range"] == 50
         assert data["pacing_limit"] == 25
@@ -67,7 +66,6 @@ def test_settings_dialog_integration() -> None:
 
     # Reset and reload
     app._pov_names_var.set("")
-    app._spellcheck_active = True
     app._pov_choice.set("All Pronouns (Broad Scan)")
     app._echo_focus_window_words = 80
     app._pacing_long_words = 19
@@ -77,11 +75,17 @@ def test_settings_dialog_integration() -> None:
 
     # Verify settings are correctly loaded back
     assert app._pov_names_var.get() == "RAULD, DETECTIVE"
-    assert app._spellcheck_active is False
     assert app._pov_choice.get() == "First Person (I/We)"
     assert app._echo_focus_window_words == 50
     assert app._pacing_long_words == 25
     assert app._arch_ignore_dialogue_var.get() is True
+
+    # Test spelling mode activation
+    assert app._spellcheck_active is False
+    app.set_editor_mode(EDITOR_MODE_SPELL)
+    assert app._spellcheck_active is True
+    app.set_editor_mode(EDITOR_MODE_OFF)
+    assert app._spellcheck_active is False
 
     # 4. Test that names in the POV names list are ignored by spelling checker
     # "Rauld" should be unknown/misspelled by default (it's not a standard English dictionary word)

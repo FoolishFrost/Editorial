@@ -189,6 +189,9 @@ class IndicatorSubsystem:
             elif getattr(self.app, "_passive_voice_active", False):
                 source_fracs = getattr(self.app, "_passive_voice_hit_fracs", [])
                 fill_color = "#f06292" # Passive voice color
+            elif getattr(self.app, "_spellcheck_active", False):
+                source_fracs = getattr(self.app, "_spellcheck_hit_fracs", [])
+                fill_color = self.colors["RED_FG"]
             elif getattr(self.app, "_arch_active", False):
                 # Sentence Architecture: draw a positional color strip
                 # Using vibrant, saturated mid-tones to avoid washing out to white

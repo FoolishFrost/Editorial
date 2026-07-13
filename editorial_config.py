@@ -1,7 +1,7 @@
 """editorial_config.py — Static configurations, parameters, and style schemes."""
 
 APP_NAME = "Editorial"
-APP_VERSION = "1.3.17"
+APP_VERSION = "1.4.0"
 COMPANY_NAME = "Foolish Designs"
 CREATOR_NAME = "John Bowden"
 SUPPORT_EMAIL = "johnbowden@foolishdesigns.com"
@@ -79,6 +79,7 @@ EDITOR_MODE_CLICHE = "cliches"
 EDITOR_MODE_REDUNDANCY = "redundancies"
 EDITOR_MODE_PASSIVE = "passive_voice"
 EDITOR_MODE_ARCH = "sentence_architecture"
+EDITOR_MODE_SPELL = "spelling_checker"
 
 EDITOR_MODES: list[tuple[str, str]] = [
     ("Editor Off", EDITOR_MODE_OFF),
@@ -93,6 +94,7 @@ EDITOR_MODES: list[tuple[str, str]] = [
     ("Redundancies", EDITOR_MODE_REDUNDANCY),
     ("Passive Voice", EDITOR_MODE_PASSIVE),
     ("Sentence Architecture", EDITOR_MODE_ARCH),
+    ("Spelling Checker", EDITOR_MODE_SPELL),
 ]
 
 ARCH_TAG_STYLES: tuple[tuple[str, str, str, bool], ...] = (

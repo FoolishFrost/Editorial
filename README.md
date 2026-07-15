@@ -1,11 +1,11 @@
 # Editorial
 
-Editorial is a fiction-focused desktop editor built for drafting and revision. it makes no use of AI, LLM, or similar systems. It uses only algorithmic detection to highlight writing patterns, allowing an editor to quickly correct a manuscript of 100,000 words or more. it does not make changes on its own, instead just highlighting possible issues so a skilled edior can work.
+Editorial is a fiction-focused desktop editor built for drafting and revision. It makes no use of AI, LLM, or similar systems. It uses only algorithmic detection to highlight writing patterns, allowing an editor to quickly correct a manuscript of 100,000 words or more. It does not make changes on its own, instead just highlighting possible issues so a skilled editor can work.
 
 ## Downloads
-- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.3.17/Editorial-Setup-1.3.17.exe
-- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.3.17/Editorial-1.3.17-portable.zip
-- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.3.17
+- Installer (recommended): https://github.com/FoolishFrost/Editorial/releases/download/v1.4.8/Editorial-Setup-1.4.8.exe
+- Portable ZIP: https://github.com/FoolishFrost/Editorial/releases/download/v1.4.8/Editorial-1.4.8-portable.zip
+- Release notes: https://github.com/FoolishFrost/Editorial/releases/tag/v1.4.8
 
 ## Documentation
 - User manual (Wiki): https://github.com/FoolishFrost/Editorial/wiki
@@ -24,7 +24,7 @@ Editorial keeps the writing experience focused on fiction work while letting you
 - **Cliches**: Scans text against standard or customizable cliché databases (`cliches.txt`).
 - **Redundancies**: Highlights duplicate or redundant wording patterns based on customized rules (`redundancies.txt`).
 - **Passive Voice**: Locates passive construction patterns (was eaten, had been seen).
-- **Spell Checking**: Highlights spelling errors with background red squiggles. Supports inline spelling suggestions, ignoring words, and custom user dictionaries (`dictionary.json`). Fully supports both straight (`'`) and curly (`’`) apostrophes in contractions.
+- **Spell Checking**: Highlights spelling errors with red squiggles. Supports inline spelling suggestions, ignoring words, and custom user dictionaries (`dictionary.json`). Fully supports both straight (`'`) and curly (`'`) apostrophes in contractions. Also detects common word confusions (their/there/they're, its/it's, your/you're, then/than, loose/lose, passed/past) using POS-aware analysis.
 
 ## Source
 - Repository: https://github.com/FoolishFrost/Editorial

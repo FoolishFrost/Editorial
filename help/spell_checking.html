@@ -244,8 +244,26 @@ code {
         <div class="tool-header tool-spell">
             <h1>12. Spell Checking</h1>
         </div>
-        <p><strong>Goal</strong>: Spot typos instantly during draft editing.</p>
-        <p><strong>How it works</strong>: Real-time checks underline spelling errors with red squiggles. Right-clicking a word opens a menu with spelling alternatives, an option to ignore the word for the session, add the word permanently to your custom dictionary, or add it to your POV Names list.</p>
+        <p><strong>Goal</strong>: Spot typos and misused homophones instantly during draft editing.</p>
+        <p><strong>How it works</strong>: Real-time checks underline spelling errors with red squiggles. Right-clicking a flagged word opens a menu with spelling alternatives, an option to ignore the word for the session, add it permanently to your custom dictionary, or add it to your POV Names list.</p>
+
+        <h2>Word Confusion Detection</h2>
+        <p>In addition to standard spell checking, the Spelling Checker also detects commonly confused word pairs that are correctly spelled but wrongly used. These are flagged with an orange underline and a right-click explanation and suggestion.</p>
+        <p>Detection uses two layers: fast regex rules for unambiguous fixed patterns, and spaCy part-of-speech analysis for context-sensitive cases where the grammar of the surrounding sentence is needed to make a reliable judgment.</p>
+
+        <h3>Detected Pairs</h3>
+        <ul>
+            <li><strong>their / there / they're</strong> — Flags <em>their</em> used where existential <em>there</em> is needed (e.g. "their was a noise"), and <em>there</em> used as a possessive before a noun (e.g. "there coats"). Also catches <em>they're</em> before a noun where <em>their</em> is meant.</li>
+            <li><strong>its / it's</strong> — Flags <em>its</em> before a verb or auxiliary where the contraction is likely intended (e.g. "its raining"), and <em>it's</em> before possessive nouns (e.g. "it's tail").</li>
+            <li><strong>your / you're</strong> — Flags <em>your</em> immediately before a verb (e.g. "your going"), where <em>you're</em> is likely the intent.</li>
+            <li><strong>then / than</strong> — Flags <em>then</em> after a comparative adjective or adverb (e.g. "better then" → "better than").</li>
+            <li><strong>loose / lose</strong> — Flags <em>loose</em> when used as a verb (e.g. "don't loose it" → "don't lose it").</li>
+            <li><strong>passed / past</strong> — Flags <em>passed</em> after a motion verb used as a directional preposition (e.g. "walked passed me" → "walked past me").</li>
+        </ul>
+
+        <h3>Dismissing False Positives</h3>
+        <p>Word confusion checks are heuristic and occasionally flag valid constructions — particularly in sentence fragments or unconventional prose styles. Right-click any flagged confusion and choose <strong>Ignore</strong> to dismiss it for the current session without adding it to your dictionary.</p>
+
         </main>
 </body>
 </html>

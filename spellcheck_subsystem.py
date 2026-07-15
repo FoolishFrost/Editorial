@@ -5,6 +5,12 @@ import gzip
 from spellchecker import SpellChecker
 from analysis_utils import _get_base_dir
 
+try:
+    import spacy
+    _SPACY_AVAILABLE = True
+except ImportError:
+    _SPACY_AVAILABLE = False
+
 
 def _write_spellchecker_dictionary_file(payload: bytes, destination: str) -> str:
     destination_path = os.path.abspath(destination)
@@ -52,6 +58,7 @@ class SpellcheckSubsystem:
         self.ignored_confusions: set[tuple[int, int]] = set()
         self.load_custom_dictionary()
         self.load_word_confusions()
+        self._load_spacy()
 
     def reinit_spellchecker(self) -> None:
         """Re-initialize the spellchecker instance to discard removed words."""
@@ -140,6 +147,223 @@ class SpellcheckSubsystem:
 
         return misspelled
 
+    # ------------------------------------------------------------------
+    # spaCy-powered word confusion detection
+    # ------------------------------------------------------------------
+
+    def _load_spacy(self) -> None:
+        """Load the spaCy model used for POS-based word confusion detection."""
+        self.nlp = None
+        if not _SPACY_AVAILABLE:
+            return
+        for model_name in ("en_core_web_sm", "en_core_web_md", "en_core_web_lg"):
+            try:
+                self.nlp = spacy.load(model_name, disable=["ner", "lemmatizer"])
+                break
+            except Exception:
+                continue
+
+    @staticmethod
+    def _next_token(doc, index: int):
+        """Return the next non-space, non-punct token after *index* in the same sentence, or None."""
+        current_token = doc[index]
+        for j in range(index + 1, len(doc)):
+            t = doc[j]
+            if t.sent != current_token.sent:
+                break
+            if not t.is_space and not t.is_punct:
+                return t
+        return None
+
+    @staticmethod
+    def _prev_token(doc, index: int):
+        """Return the previous non-space, non-punct token before *index* in the same sentence, or None."""
+        current_token = doc[index]
+        for j in range(index - 1, -1, -1):
+            t = doc[j]
+            if t.sent != current_token.sent:
+                break
+            if not t.is_space and not t.is_punct:
+                return t
+        return None
+
+    def _flag(self, token, suggest: str, explanation: str) -> tuple[int, int, str, str]:
+        return (token.idx, token.idx + len(token.text), suggest, explanation)
+
+    def check_word_confusion(self, content: str) -> list[tuple[int, int, str, str]]:
+        """
+        Use spaCy POS tagging and regex-based patterns to detect word confusions with accuracy.
+        Returns list of (start, end, suggestion, explanation) tuples.
+        """
+        if not content.strip():
+            return []
+
+        results: list[tuple[int, int, str, str]] = []
+
+        # 1. Regex-based checks
+        if hasattr(self, "confusion_rules") and self.confusion_rules:
+            for rule in self.confusion_rules:
+                for match in rule["re"].finditer(content):
+                    start, end = match.span()
+                    matched_text = match.group(0)
+                    trigger = rule["trigger"]
+                    trigger_match = re.search(r"\b" + re.escape(trigger) + r"\b", matched_text, re.IGNORECASE)
+                    if trigger_match:
+                        t_start = start + trigger_match.start()
+                        t_end = start + trigger_match.end()
+                    else:
+                        t_start, t_end = start, end
+                    
+                    if (t_start, t_end) in self.ignored_confusions:
+                        continue
+                    
+                    results.append((t_start, t_end, rule["suggest"], rule["explanation"]))
+
+        # 2. spaCy-based checks
+        if self.nlp is not None:
+            try:
+                doc = self.nlp(content)
+                for i, token in enumerate(doc):
+                    span = (token.idx, token.idx + len(token.text))
+                    if span in self.ignored_confusions:
+                        continue
+
+                    word_lower = token.text.lower()
+                    nxt = self._next_token(doc, i)
+                    prv = self._prev_token(doc, i)
+
+                    # ----------------------------------------------------------------
+                    # their / there / they're
+                    # ----------------------------------------------------------------
+                    if word_lower == "their":
+                        if nxt is not None:
+                            # "their" before a form of 'be' or existential context
+                            # → "There was/is/are/were a …"
+                            if nxt.lemma_ == "be" and nxt.pos_ in ("AUX", "VERB"):
+                                results.append(self._flag(
+                                    token, "There",
+                                    "'There' introduces existential clauses ('There was …'); "
+                                    "'their' is possessive."
+                                ))
+                            # "their" before a present/past participle where no noun follows
+                            # (e.g. "their going", "their running") → "they're"
+                            elif nxt.tag_ == "VBG" and nxt.dep_ not in ("pcomp",):
+                                results.append(self._flag(
+                                    token, "they're",
+                                    "'they're' = 'they are'; 'their' is possessive."
+                                ))
+
+                    elif word_lower == "there":
+                        # Detect "there" used as a possessive determiner (should be "their").
+                        # Legitimate existential "there" carries dep="expl" in spaCy's parse.
+                        # Misused "there" (e.g. "there coats") will have dep="advmod" or similar.
+                        if nxt is not None and nxt.pos_ in ("NOUN", "PROPN"):
+                            is_existential = (
+                                token.dep_ == "expl"
+                                or any(
+                                    t.pos_ in ("VERB", "AUX") and t.dep_ == "ROOT"
+                                    for t in doc[i:min(len(doc), i + 4)]
+                                )
+                            )
+                            if not is_existential:
+                                results.append(self._flag(
+                                    token, "their",
+                                    "'their' is possessive; 'there' indicates a location."
+                                ))
+
+                    # ----------------------------------------------------------------
+                    # its / it's
+                    # spaCy tokenises "it's" → [it]['][s], so we only see "its" here.
+                    # ----------------------------------------------------------------
+                    elif word_lower == "its":
+                        if nxt is not None:
+                            # Standard case: "its" before a finite verb/aux ("its was", "its is")
+                            if nxt.pos_ in ("VERB", "AUX") and nxt.tag_ not in ("VBG",):
+                                results.append(self._flag(
+                                    token, "it's",
+                                    "'it's' = 'it is / it has'; 'its' is possessive."
+                                ))
+                            # Edge case: spaCy sometimes reads "Its raining" as a noun phrase
+                            # tagging "raining" as NN.  Catch: "its" dep=poss, head tagged NN.
+                            elif (token.dep_ == "poss"
+                                  and token.head.tag_ == "NN"
+                                  and token.head.text.endswith("ing")):
+                                results.append(self._flag(
+                                    token, "it's",
+                                    "'it's' = 'it is / it has'; 'its' is possessive."
+                                ))
+
+                    # ----------------------------------------------------------------
+                    # your / you're
+                    # ----------------------------------------------------------------
+                    elif word_lower == "your":
+                        # spaCy tags "Your going" as PRP$/nsubj + VBG/ROOT.
+                        # Include VBG here (unlike the its rule) because "your going"
+                        # is unambiguously a contraction error.
+                        if (nxt is not None
+                                and nxt.pos_ in ("VERB", "AUX")):
+                            results.append(self._flag(
+                                token, "you're",
+                                "'you're' = 'you are'; 'your' is possessive."
+                            ))
+
+                    # ----------------------------------------------------------------
+                    # then / than  (comparative context)
+                    # ----------------------------------------------------------------
+                    elif word_lower == "then":
+                        # Preceded by a comparative adjective or adverb (JJR / RBR)
+                        if prv is not None and prv.tag_ in ("JJR", "RBR"):
+                            results.append(self._flag(
+                                token, "than",
+                                "Use 'than' for comparisons ('better than'); "
+                                "'then' indicates time or sequence."
+                            ))
+
+                    # ----------------------------------------------------------------
+                    # loose / lose
+                    # ----------------------------------------------------------------
+                    elif word_lower == "loose":
+                        # spaCy tags "loose" as VERB when used incorrectly as one
+                        if token.pos_ == "VERB":
+                            results.append(self._flag(
+                                token, "lose",
+                                "'lose' is a verb (to misplace/fail); "
+                                "'loose' is an adjective (not tight)."
+                            ))
+
+                    # ----------------------------------------------------------------
+                    # passed / past  (directional preposition)
+                    # ----------------------------------------------------------------
+                    elif word_lower == "passed":
+                        # Preceded by a motion verb → directional "past"
+                        # Use .text.lower() because lemmatizer may be disabled.
+                        _motion_verbs = {
+                            "walked", "ran", "drove", "flew", "sprinted",
+                            "hurried", "went", "came", "rushed", "marched",
+                            "strode", "strolled", "jogged", "rode", "sailed",
+                            "walk", "run", "drive", "fly", "sprint",
+                            "hurry", "go", "come", "rush", "march",
+                            "stride", "stroll", "jog", "ride", "sail",
+                        }
+                        if prv is not None and prv.text.lower() in _motion_verbs:
+                            results.append(self._flag(
+                                token, "past",
+                                "'past' is a preposition of direction ('walked past me'); "
+                                "'passed' is the past tense of 'to pass'."
+                            ))
+            except Exception:
+                pass
+
+        # Deduplicate / resolve overlapping spans (keep earliest)
+        results.sort(key=lambda x: x[0])
+        resolved: list[tuple[int, int, str, str]] = []
+        last_end = -1
+        for item in results:
+            if item[0] >= last_end:
+                resolved.append(item)
+                last_end = item[1]
+        return resolved
+
     def load_word_confusions(self) -> None:
         self.confusion_rules = []
         path = os.path.join(_get_base_dir(), "word_confusions.json")
@@ -227,39 +451,6 @@ class SpellcheckSubsystem:
                     self.confusion_rules.append(r)
         except Exception:
             pass
-
-    def check_word_confusion(self, content: str) -> list[tuple[int, int, str, str]]:
-        if not content.strip() or not hasattr(self, "confusion_rules") or not self.confusion_rules:
-            return []
-
-        matches = []
-        for rule in self.confusion_rules:
-            for match in rule["re"].finditer(content):
-                start, end = match.span()
-                matched_text = match.group(0)
-                trigger = rule["trigger"]
-                trigger_match = re.search(r"\b" + re.escape(trigger) + r"\b", matched_text, re.IGNORECASE)
-                if trigger_match:
-                    t_start = start + trigger_match.start()
-                    t_end = start + trigger_match.end()
-                else:
-                    t_start, t_end = start, end
-                
-                if (t_start, t_end) in self.ignored_confusions:
-                    continue
-                
-                matches.append((t_start, t_end, rule["suggest"], rule["explanation"]))
-        
-        matches.sort(key=lambda x: x[0])
-        
-        resolved = []
-        last_end = -1
-        for start, end, suggest, explanation in matches:
-            if start >= last_end:
-                resolved.append((start, end, suggest, explanation))
-                last_end = end
-        
-        return resolved
 
     def ignore_confusion(self, start: int, end: int) -> None:
         self.ignored_confusions.add((start, end))

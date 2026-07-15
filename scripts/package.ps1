@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.4.5"
+    [string]$Version = "1.4.8"
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot

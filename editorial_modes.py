@@ -100,6 +100,8 @@ class ModeSubsystem:
                     self.root.after(0, lambda p=ui_pct: self._set_editor_progress(p, "Weak"))
 
                 hits = analyze_weak_modifiers(content, progress_callback=on_scan_progress)
+                if hasattr(self, "_mode_ignore_subsystem"):
+                    hits = self._mode_ignore_subsystem.filter_hits("weak_modifiers", content, hits)
                 self.root.after(0, lambda: self._complete_weak_mod_analysis(run_id, hits, None))
             except Exception as exc:
                 self.root.after(0, lambda: self._complete_weak_mod_analysis(run_id, None, exc))
@@ -711,6 +713,8 @@ class ModeSubsystem:
                     active_pov_pronouns=active_pov,
                     progress_callback=on_scan_progress,
                 )
+                if hasattr(self, "_mode_ignore_subsystem"):
+                    raw_hits = self._mode_ignore_subsystem.filter_hits("filter_words", content, raw_hits)
                 grouped: dict[str, list[tuple[int, int]]] = {"red": [], "purple": []}
                 for ws, we, cls in raw_hits:
                     if cls == "yellow":

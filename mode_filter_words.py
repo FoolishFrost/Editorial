@@ -4,14 +4,24 @@ from typing import Callable
 from spacy_helper import _get_nlp
 from dialogue_masker import _scan_dialogue, _mask_dialogue_spans, _is_in_dialogue, _token_overlaps_ignored_phrase
 
-FILTER_LEMMAS: list[str] = [
+from analysis_utils import load_or_create_list
+
+_DEFAULT_FILTER_LEMMAS: list[str] = [
     "see", "look", "hear", "feel", "smell", "taste", "notice", "watch",
     "observe", "realize", "think", "know", "wonder", "decide", "note",
 ]
 
-POV_PRONOUNS: list[str] = ["i", "he", "she", "we", "they"]
-
+FILTER_LEMMAS = load_or_create_list("filter_words.txt", _DEFAULT_FILTER_LEMMAS)
 _FILTER_SET = set(FILTER_LEMMAS)
+
+
+def reload_filter_words() -> None:
+    global FILTER_LEMMAS, _FILTER_SET
+    FILTER_LEMMAS = load_or_create_list("filter_words.txt", _DEFAULT_FILTER_LEMMAS)
+    _FILTER_SET = set(FILTER_LEMMAS)
+
+
+POV_PRONOUNS: list[str] = ["i", "he", "she", "we", "they"]
 
 
 def analyze_filter_words(

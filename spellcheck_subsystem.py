@@ -22,14 +22,44 @@ def _write_spellchecker_dictionary_file(payload: bytes, destination: str) -> str
     return destination_path
 
 
+# Valid suffixes produced by English contractions after the apostrophe.
+# Tokens whose post-apostrophe part is one of these are correctly-formed
+# contractions (e.g. don't, they've, he'd, she'll, I'm, let's).
+# Any *other* post-apostrophe part (e.g. "nt" in "did'nt") is not a valid
+# suffix and will be spell-checked so the typo is caught.
+_VALID_CONTRACTION_SUFFIXES: frozenset[str] = frozenset({
+    "t",    # don't, can't, won't, didn't …
+    "s",    # it's, he's, let's, that's …
+    "ve",   # I've, they've, we've …
+    "re",   # you're, they're, we're …
+    "d",    # he'd, she'd, I'd, you'd …
+    "ll",   # he'll, I'll, we'll …
+    "m",    # I'm
+})
+
+# Stems of valid negative English contractions before the apostrophe.
+# When the contraction suffix is 't, these stems are whitelisted and not checked
+# (since e.g. "didn", "wasn" are not standard standalone dictionary words).
+_VALID_NEGATION_STEMS: frozenset[str] = frozenset({
+    "don", "can", "won", "didn", "wasn", "wouldn", "couldn", "haven",
+    "shouldn", "aren", "isn", "weren", "hadn", "hasn", "doesn",
+    "mightn", "mustn", "needn", "shan", "daren", "oughtn", "ain", "mayn"
+})
+
+
 def _extract_spellcheck_tokens(content: str) -> list[tuple[str, tuple[int, int]]]:
+    """Tokenise *content* into (word, (start, end)) pairs for spell-checking.
+    
+    Returns each word (including its apostrophe, normalized to straight)
+    as a single token.
+    """
     tokens: list[tuple[str, tuple[int, int]]] = []
     for match in re.finditer(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?", content):
         word = match.group(0)
+        # Normalize curly apostrophe to straight apostrophe for spellchecker lookup
         normalized_word = word.replace("\u2019", "'")
-        if "'" in normalized_word:
-            continue
-        tokens.append((word, match.span()))
+        tokens.append((normalized_word, match.span()))
+
     return tokens
 
 
@@ -128,22 +158,41 @@ class SpellcheckSubsystem:
         if not tokens:
             return []
 
-        words = [word for word, _ in tokens]
-        spans = [span for _, span in tokens]
-
-        # Lowercase and deduplicate spelling candidates to minimize spellchecker lookups
         pov_names_lower = {name.lower() for name in pov_names} if pov_names else set()
+
+        # Lowercase and deduplicate spelling candidates to minimize lookups
         unique_words = {
-            w.lower() for w in words
+            w.lower() for w, _ in tokens
             if w.lower() not in self.ignored_words and w.lower() not in pov_names_lower
         }
 
+        # Query spellchecker for unknown words among the unique candidates
         unknown_unique = self.spellchecker.unknown(list(unique_words))
 
+        # Check if any unknown word containing an apostrophe is actually a valid contraction
+        known_contractions = set()
+        for w in unknown_unique:
+            if "'" in w:
+                parts = w.split("'", 1)
+                stem = parts[0]
+                suffix = parts[1] if len(parts) > 1 else ""
+
+                if suffix in _VALID_CONTRACTION_SUFFIXES:
+                    # Case A: Valid negation stem + 't (e.g. didn't, wasn't)
+                    if suffix == "t" and stem in _VALID_NEGATION_STEMS:
+                        known_contractions.add(w)
+                    # Case B: Standard suffix on a known/valid word (e.g. Kindra's, writer's)
+                    # Suffix 't is strictly reserved for valid negation stems (Case A).
+                    elif suffix != "t" and (len(self.spellchecker.unknown([stem])) == 0 or stem in pov_names_lower):
+                        known_contractions.add(w)
+
+        # Misspelled unique words are those flagged as unknown minus the valid contractions
+        actual_misspelled = unknown_unique - known_contractions
+
         misspelled = []
-        for i, word in enumerate(words):
-            if word.lower() in unknown_unique:
-                misspelled.append(spans[i])
+        for word, span in tokens:
+            if word.lower() in actual_misspelled:
+                misspelled.append(span)
 
         return misspelled
 

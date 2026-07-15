@@ -77,3 +77,13 @@ def test_word_confusion_rules_loading_and_checking() -> None:
         assert start == 5
         assert end == 9
         assert suggest == "its"
+
+
+def test_word_confusion_menu_suggest_parsing() -> None:
+    import re
+    suggest = "lie / lay (past of lie)"
+    options = [opt.strip() for opt in suggest.split(" / ") if opt.strip()]
+    assert options == ["lie", "lay (past of lie)"]
+    
+    replacements = [re.sub(r'\s*\(.*?\)', '', opt).strip() for opt in options]
+    assert replacements == ["lie", "lay"]

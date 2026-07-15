@@ -9,14 +9,14 @@
   {
     "id": "its_participle",
     "trigger": "its",
-    "pattern": "\\bits\\s+[a-z]+ing(?:\\s+(?:at|on|in|to|for|with|by|from|of|about|up|down|out|away|here|there|now|then|again|too|very|so|already|outside|inside|me|you|him|her|us|them|it|a|an|the|not)\\b|(?=\\s*[,.!?;:\\-—\\)]|$))",
+    "pattern": "\\bits\\s+[a-z]+ing(?:\\s+(?:at|on|in|to|for|with|by|from|of|about|up|down|out|away|here|there|now|then|again|too|very|so|already|outside|inside|me|you|him|her|us|them|it|a|an|the|not)\\b|(?=\\s*[,.!?;:\\-\u2014\\)]|$))",
     "suggest": "it's",
     "explanation": "Usually followed by a participle (e.g., 'it's raining'). Use 'it's'."
   },
   {
     "id": "its_possessive",
     "trigger": "it's",
-    "pattern": "\\bit's\\s+(own|name|eyes|face|head|body|life|mind|back|hand|hands|feet|foot|leg|legs|arm|arms|tail|wings|wing|voice|sound|light|color|size|shape|weight|length|width|height|depth|age|history|origin|power|strength|weakness|nature|beauty|truth|value|meaning|purpose|effect|cause|result|impact|role|job|work|duty|task|care|love|blood|bone|bones|skin|hair|fur|feather|feathers|teeth|tooth|mouth|nose|ear|ears|heart|brain|soul|spirit|sword|shield|armor|weapon|weapons|tool|tools|device|machine|car|house|room|door|window|wall|roof|floor|garden|tree|flower|plant|animal|dog|cat|bird|fish|prey|predator|victim|target|enemy|friend|allies|ally|partner|leader|member|team|group|class|family|home|land|country|state|city|town|street|road|path|river|lake|sea|ocean|sky|wind|rain|snow|ice|fire|smoke|ash|dust|dirt|stone|rock|sand|metal|gold|silver|iron|wood|paper|glass|plastic|cloth|leather|clothes|food|water|drink|wine|beer|milk|honey|fruit|apple|bread|meat|cheese|egg|eggs|seed|seeds|grain|leaf|leaves|branch|root|roots|trunk|bark|shell|scales|scale|claw|claws|horn|horns|beak|beaks|hoof|hoofs|paw|paws|furry|bloody|bony|cold|warm|hot|dry|wet|soft|hard|rough|smooth|sharp|dull|heavy|light|dark|bright|clean|dirty|new|old|young|mature|fresh|stale|sweet|sour|bitter|salty|loud|quiet|silent|fast|slow|quick|rapid|sudden|gentle|fierce|wild|tame|smart|dumb|wise|foolish|brave|cowardly|weak|strong|sick|healthy|dead|alive|happy|sad|angry|scared|proud|humble|rich|poor|cheap|expensive|free|bound|safe|dangerous|secret|public|private|personal|local|global|national|foreign|strange|weird|odd|normal|usual|unusual|special|common|rare|unique|perfect|imperfect|flawed|correct|incorrect|wrong|right|true|false|real|fake|artificial|natural|organic|inorganic|chemical|physical|mental|emotional|spiritual|moral|immoral|legal|illegal|fair|unfair|just|unjust|good|bad|evil|holy|sinful|sacred|profane|divine|mortal|immortal|human|alien|monster|beast|god|gods|goddess|devil|angel|ghost|phantom|spirit|demon|witch|wizard|mage|priest|king|queen|prince|princess|lord|lady|knight|soldier|guard|warrior|hunter|thief|rogue|assassin|spy|messenger|servant|slave|master|boss|owner|ruler|citizen|subject|peasant|farmer|merchant|trader|craftsman|builder|artist|writer|poet|singer|actor|dancer|musician|doctor|healer|teacher|student|scholar|sage|philosopher|scientist|engineer|inventor|pilot|driver|captain|crew|sailor|pirate|explorer|pioneer|colonist|native|settler|refugee|exile|outlaw|prisoner|hostage|victim|survivor|witness|suspect|criminal|judge|lawyer|police|sheriff|detective|spy|agent|officer|general|major|colonel|captain|lieutenant|sergeant|corporal|private|recruit|veteran)\\b",
+    "pattern": "\\bit's\\s+(?:(?:own|name|eyes|face|head|body|life|mind|back|hand|hands|feet|foot|leg|legs|arm|arms|tail|wings|wing|voice|sound|light|color|colour|size|shape|weight|length|width|height|depth|age|history|origin|power|strength|weakness|nature|beauty|truth|value|meaning|purpose|effect|cause|result|impact|role|job|work|duty|task|care|love|blood|bloody|bone|bones|skin|hair|fur|feather|feathers|teeth|tooth|mouth|nose|ear|ears|heart|brain|soul|spirit|sword|shield|armor|armour|weapon|weapons|tool|tools|device|machine|car|house|room|door|window|wall|roof|floor|garden|tree|flower|plant|animal|dog|cat|bird|fish|prey|predator|victim|target|enemy|friend|allies|ally|partner|leader|member|team|group|class|family|home|land|country|state|city|town|street|road|path|river|lake|sea|ocean|sky|wind|rain|snow|ice|fire|smoke|ash|dust|dirt|stone|rock|sand|metal|gold|silver|iron|wood|paper|glass|plastic|cloth|leather|clothes|food|water|drink|wine|beer|milk|honey|fruit|apple|bread|meat|cheese|egg|eggs|seed|seeds|grain|leaf|leaves|branch|root|roots|trunk|bark|shell|scales|scale|claw|claws|horn|horns|beak|beaks|hoof|hoofs|paw|paws)\\b|(?:great|powerful|vast|deep|dark|cold|hot|sharp|heavy|bright|ancient|sacred|true|false|only|last|first|long|short|narrow|wide|tall|small|large|massive|tiny|old|young|new|rough|smooth|hard|soft|warm|red|blue|green|black|white|grey|gray|golden|broken|twisted|hidden|secret|noble|holy|terrible|fearsome|gentle|fierce|wild|tame|loyal|bloody)\\s+(?:\\w+\\b))",
     "suggest": "its",
     "explanation": "'its' is possessive; 'it's' is a contraction of 'it is' or 'it has'."
   },
@@ -68,5 +68,96 @@
     "pattern": "\\b(walked|ran|drove|flew|sprinted|walk|run|drive|fly|sprint|hurried|went|go|came|come)\\s+passed\\b",
     "suggest": "past",
     "explanation": "Use 'past' as a preposition of direction (e.g., 'walked past me'); 'passed' is the past tense of 'to pass'."
+  },
+  {
+    "id": "effect_as_verb",
+    "trigger": "effect",
+    "pattern": "\\b(?:will|can|could|would|should|may|might|to|and|but|that)\\s+effect(?:s|ed|ing)?\\s+(?:him|her|them|it|us|me|you|the\\s+\\w+|his\\s+\\w+|her\\s+\\w+|their\\s+\\w+|my\\s+\\w+|our\\s+\\w+|your\\s+\\w+|a\\s+\\w+|an\\s+\\w+|every\\s+\\w+|each\\s+\\w+|this\\s+\\w+|that\\s+\\w+|these\\s+\\w+|those\\s+\\w+|all\\s+\\w+|both\\s+\\w+|many\\s+\\w+|most\\s+\\w+|few\\s+\\w+|some\\s+\\w+|any\\s+\\w+|no\\s+\\w+)\\b",
+    "suggest": "affect",
+    "explanation": "'affect' is the verb ('it affects the outcome'); 'effect' is usually the noun ('the effect was immediate'). Use 'affect' here."
+  },
+  {
+    "id": "affect_as_noun",
+    "trigger": "affect",
+    "pattern": "\\b(?:the|an|a|this|that|its|their|his|her|our|your|no|some|any|one|little|big|great|strong|weak|positive|negative|side|net|overall|total|direct|indirect|immediate|lasting|desired|intended|harmful|beneficial|adverse)\\s+affect\\s+(?:on|of|is|was|were|has|have|had|that|which)\\b",
+    "suggest": "effect",
+    "explanation": "'effect' is the noun ('the effect on morale'); 'affect' is the verb. Use 'effect' here."
+  },
+  {
+    "id": "lay_for_lie",
+    "trigger": "lay",
+    "pattern": "\\b(?:I|he|she|they|we|it)\\s+lay(?:s)?\\s+(?:down|there|here|back|still|quiet|flat|on the|in the|beside|next to|against|across|along)\\b",
+    "suggest": "lie / lay (past of lie)",
+    "explanation": "'lie' means to recline (intransitive: 'she lies down', past tense: 'she lay down'). 'lay' means to place something (transitive: 'lay the book down'). Check which is intended."
+  },
+  {
+    "id": "fewer_less_countable",
+    "trigger": "less",
+    "pattern": "\\bless\\s+(?:people|men|women|children|kids|students|words|pages|items|things|cases|times|attempts|errors|mistakes|problems|questions|answers|options|choices|chances|opportunities|reasons|arguments|points|characters|objects|animals|events|steps|stages|parts|pieces|elements|tasks|jobs|rules|conditions|requirements|criteria)\\b",
+    "suggest": "fewer",
+    "explanation": "Use 'fewer' with countable nouns (e.g., 'fewer people', 'fewer words'); use 'less' with uncountable nouns (e.g., 'less water', 'less time')."
+  },
+  {
+    "id": "imply_infer_confusion",
+    "trigger": "infer",
+    "pattern": "\\b(?:the\\s+\\w+|he|she|they|it|I|we)\\s+inferred\\s+(?:that|by saying|by writing|through\\s+his|through\\s+her|through\\s+its|through\\s+their)\\b",
+    "suggest": "implied",
+    "explanation": "Speakers and writers 'imply' (suggest something indirectly); listeners and readers 'infer' (draw a conclusion). Check whether the subject is communicating or interpreting."
+  },
+  {
+    "id": "bring_take_away",
+    "trigger": "bring",
+    "pattern": "\\b(?:bring|brings|brought|bringing)\\s+(?:it|them|this|that|him|her|one|me|us)\\s+(?:there|away|over there|to them|to him|to her|back to them|back to him|back to her)\\b",
+    "suggest": "take",
+    "explanation": "'Bring' implies movement toward the speaker ('bring it here'); 'take' implies movement away ('take it there'). Check the direction of movement."
+  },
+  {
+    "id": "lead_past_tense",
+    "trigger": "lead",
+    "pattern": "\\b(?:he|she|they|we|I|it|the\\s+\\w+|a\\s+\\w+)\\s+lead\\s+(?:the|a|an|his|her|their|our|my|your|us|them|him|her|me|it|everyone|all|both|each|every|no|some|many|most|few|several|those|these)\\b",
+    "suggest": "led",
+    "explanation": "'led' is the past tense of 'lead' (e.g., 'she led the group'). 'lead' is the present tense or the metal. This looks like a past-tense context."
+  },
+  {
+    "id": "peaked_interest",
+    "trigger": "peak",
+    "pattern": "\\bpeak(?:ed|s|ing)?\\s+(?:my|his|her|their|our|your|its|the|someone's|everyone's|anyone's|no one's|one's)\\s+(?:interest|curiosity|attention|appetite|desire|suspicion|enthusiasm|excitement|imagination|wonder|fascination)\\b",
+    "suggest": "piqued",
+    "explanation": "'Pique' means to arouse or stimulate ('it piqued her interest'). 'Peak' means to reach a maximum, and 'peek' means to glance. This is almost certainly meant to be 'piqued'."
+  },
+  {
+    "id": "free_reign",
+    "trigger": "reign",
+    "pattern": "\\bfree\\s+reign\\b",
+    "suggest": "free rein",
+    "explanation": "'Free rein' is the correct idiom — from horse riding, where loose reins allow the horse to move freely. 'Reign' refers to a monarch's rule."
+  },
+  {
+    "id": "pour_over",
+    "trigger": "pour",
+    "pattern": "\\b(?:poured|pours|pour|pouring)\\s+over\\s+(?:the|a|an|his|her|their|our|my|your|its|every|each|this|that|those|these|old|new|ancient|dusty|thick|thin|faded|worn|open|closed|scattered|stacked|several|many|some|a\\s+few|the\\s+\\w+)\\s*\\w*\\s*(?:book|books|page|pages|map|maps|document|documents|letter|letters|report|reports|file|files|record|records|scroll|scrolls|manuscript|manuscripts|text|texts|note|notes|plan|plans|blueprint|blueprints|ledger|ledgers|journal|journals|diary|diaries|chart|charts|tome|tomes|volume|volumes|paper|papers|sheet|sheets|folder|folders|dossier|dossiers|evidence|data|information|details|list|lists|entry|entries|account|accounts|transcript|transcripts|archive|archives|photo|photos|photograph|photographs|image|images|map|maps)\\b",
+    "suggest": "pored",
+    "explanation": "'Pore over' means to study something closely ('she pored over the map'). 'Pour' means to flow or tip a liquid. This is almost certainly 'pored'."
+  },
+  {
+    "id": "bare_with_me",
+    "trigger": "bare",
+    "pattern": "\\bbare\\s+with\\s+(?:me|us|him|her|them|it)\\b",
+    "suggest": "bear with",
+    "explanation": "'Bear with me' means to be patient (to endure or tolerate). 'Bare' means naked or to expose. The correct idiom is 'bear with'."
+  },
+  {
+    "id": "flair_flare",
+    "trigger": "flare",
+    "pattern": "\\b(?:a|an|real|natural|innate|remarkable|particular|unique|special|certain|some|great|genuine|true|obvious|clear|definite|obvious)\\s+flare\\s+(?:for|of|with)\\b",
+    "suggest": "flair",
+    "explanation": "'Flair' means a natural talent or stylish quality ('a flair for drama'). 'Flare' means a burst of light or flame, or to spread outward. This context calls for 'flair'."
+  },
+  {
+    "id": "farther_further_distance",
+    "trigger": "further",
+    "pattern": "\\b(?:walked|ran|drove|rode|traveled|travelled|moved|pushed|pulled|stretched|reached|gone|go|going|away|back|down|up|along|ahead|behind|beyond|from here|from there|from home|from us|from me|from him|from her|from them)\\s+further\\b",
+    "suggest": "farther",
+    "explanation": "'Farther' refers to physical distance ('walked farther down the road'). 'Further' refers to degree or extent ('nothing further to say'). This looks like a physical distance context."
   }
 ]

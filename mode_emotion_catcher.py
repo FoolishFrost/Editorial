@@ -4,13 +4,22 @@ from typing import Callable
 from spacy_helper import _get_nlp
 from dialogue_masker import _scan_dialogue, _mask_dialogue_spans, _is_in_dialogue
 
-EMOTION_WORDS: set[str] = {
+from analysis_utils import load_or_create_list
+
+_DEFAULT_EMOTIONS: list[str] = [
     "angry", "anger", "furious", "irate", "mad", "rage", "enraged",
     "sad", "sorrow", "depressed", "miserable", "gloomy", "heartbroken",
     "terrified", "afraid", "fearful", "scared", "panic", "anxious",
     "happy", "joyful", "glad", "delighted", "elated", "cheerful",
     "jealous", "envy", "envious", "resentful",
-}
+]
+
+EMOTION_WORDS = set(load_or_create_list("emotions.txt", _DEFAULT_EMOTIONS))
+
+
+def reload_emotion_words() -> None:
+    global EMOTION_WORDS
+    EMOTION_WORDS = set(load_or_create_list("emotions.txt", _DEFAULT_EMOTIONS))
 
 
 def analyze_emotion_words(

@@ -37,8 +37,11 @@ def collect_export_ranges(
     if mode == EDITOR_MODE_EMOTION:
         if not app._emotion_update_needed and app._emotion_hits:
             return sorted([(ws, we, "emotion") for ws, we in app._emotion_hits], key=lambda x: x[0])
+        hits = analyze_emotion_words(text)
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits = app._mode_ignore_subsystem.filter_hits("emotion_catcher", text, hits)
         return sorted(
-            [(ws, we, "emotion") for ws, we, _cls in analyze_emotion_words(text)],
+            [(ws, we, "emotion") for ws, we, _cls in hits],
             key=lambda x: x[0],
         )
     if mode == EDITOR_MODE_ECHO:
@@ -53,8 +56,11 @@ def collect_export_ranges(
     if mode == EDITOR_MODE_DTAG:
         if not app._dialogue_tag_update_needed and app._dialogue_tag_hits:
             return sorted([(ws, we, "dialogue_tag") for ws, we in app._dialogue_tag_hits], key=lambda x: x[0])
+        hits = analyze_dialogue_tags(text)
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits = app._mode_ignore_subsystem.filter_hits("dialogue_tags", text, hits)
         return sorted(
-            [(ws, we, "dialogue_tag") for ws, we, _cls in analyze_dialogue_tags(text)],
+            [(ws, we, "dialogue_tag") for ws, we, _cls in hits],
             key=lambda x: x[0],
         )
     if mode == EDITOR_MODE_PACING:
@@ -71,24 +77,33 @@ def collect_export_ranges(
         if not getattr(app, "_cliche_update_needed", False) and getattr(app, "_cliche_hits", None):
             return sorted([(ws, we, "cliche_hit") for ws, we in app._cliche_hits], key=lambda x: x[0])
         from filter_analyzer import analyze_cliches
+        hits = analyze_cliches(text)
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits = app._mode_ignore_subsystem.filter_hits("cliches", text, hits)
         return sorted(
-            [(ws, we, "cliche_hit") for ws, we, _cls in analyze_cliches(text)],
+            [(ws, we, "cliche_hit") for ws, we, _cls in hits],
             key=lambda x: x[0],
         )
     if mode == EDITOR_MODE_REDUNDANCY:
         if not getattr(app, "_redundancy_update_needed", False) and getattr(app, "_redundancy_hits", None):
             return sorted([(ws, we, "redundancy_hit") for ws, we in app._redundancy_hits], key=lambda x: x[0])
         from filter_analyzer import analyze_redundancies
+        hits = analyze_redundancies(text)
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits = app._mode_ignore_subsystem.filter_hits("redundancies", text, hits)
         return sorted(
-            [(ws, we, "redundancy_hit") for ws, we, _cls in analyze_redundancies(text)],
+            [(ws, we, "redundancy_hit") for ws, we, _cls in hits],
             key=lambda x: x[0],
         )
     if mode == EDITOR_MODE_PASSIVE:
         if not getattr(app, "_passive_voice_update_needed", False) and getattr(app, "_passive_voice_hits", None):
             return sorted([(ws, we, "passive_voice_hit") for ws, we in app._passive_voice_hits], key=lambda x: x[0])
         from filter_analyzer import analyze_passive_voice
+        hits = analyze_passive_voice(text)
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits = app._mode_ignore_subsystem.filter_hits("passive_voice", text, hits)
         return sorted(
-            [(ws, we, "passive_voice_hit") for ws, we, _cls in analyze_passive_voice(text)],
+            [(ws, we, "passive_voice_hit") for ws, we, _cls in hits],
             key=lambda x: x[0],
         )
     if mode == EDITOR_MODE_WEAK:
@@ -98,6 +113,8 @@ def collect_export_ranges(
                 key=lambda x: x[0],
             )
         hits_raw = analyze_weak_modifiers(text)
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits_raw = app._mode_ignore_subsystem.filter_hits("weak_modifiers", text, hits_raw)
         return sorted(
             [(ws, we, "orange") for ws, we, _cls in hits_raw],
             key=lambda x: x[0],
@@ -124,6 +141,8 @@ def collect_export_ranges(
             pov_character_names=pov_names,
             active_pov_pronouns=active_pov,
         )
+        if hasattr(app, "_mode_ignore_subsystem"):
+            hits_raw = app._mode_ignore_subsystem.filter_hits("filter_words", text, hits_raw)
         return sorted(
             [(ws, we, "red" if cls == "yellow" else cls) for ws, we, cls in hits_raw],
             key=lambda x: x[0],
@@ -275,8 +294,8 @@ def build_rtf_export(text: str, ranges: list[tuple[int, int, str]]) -> str:
     )
     header = (
         r"{\rtf1\ansi\deff0"
-        r"{\fonttbl{\f0 Consolas;}}"
+        r"{\fonttbl{\f0 Times New Roman;}}"
         + color_table +
-        r"\viewkind4\uc1\pard\f0\fs22 "
+        r"\viewkind4\uc1\pard\f0\fs24 "
     )
     return header + "".join(chunks) + r"}"

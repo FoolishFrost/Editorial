@@ -497,6 +497,10 @@ class EditorialApp:
             custom_dict_path=self._custom_dict_path,
             local_dict_path=local_dict_path
         )
+        from mode_ignore_subsystem import ModeIgnoreSubsystem
+        self._mode_ignore_subsystem = ModeIgnoreSubsystem(
+            settings_dir=os.path.dirname(self._settings_path)
+        )
 
     # --------------------------------------------------------------- toolbar
 
@@ -1205,10 +1209,19 @@ class EditorialApp:
             word_end = f"1.0 + {we}c"
 
             menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
-            menu.add_command(
-                label=f"Did you mean '{suggest}'?",
-                command=lambda s=suggest: self._apply_suggestion(word_start, word_end, s)
-            )
+            if " / " in suggest:
+                options = [opt.strip() for opt in suggest.split(" / ") if opt.strip()]
+                for opt in options:
+                    replacement = re.sub(r'\s*\(.*?\)', '', opt).strip()
+                    menu.add_command(
+                        label=f"Change to '{opt}'",
+                        command=lambda r=replacement: self._apply_suggestion(word_start, word_end, r)
+                    )
+            else:
+                menu.add_command(
+                    label=f"Did you mean '{suggest}'?",
+                    command=lambda s=suggest: self._apply_suggestion(word_start, word_end, s)
+                )
             menu.add_separator()
             menu.add_command(label=explanation, state="disabled")
             menu.add_separator()
@@ -1217,6 +1230,68 @@ class EditorialApp:
                 command=lambda s=ws, e=we: self._ignore_confusion(s, e)
             )
             menu.tk_popup(event.x_root, event.y_root)
+
+        else:
+            # Check for ignored-word context menu for other analysis modes
+            TAG_TO_MODE = {
+                "filter_red": ("filter_words", "Filter Words"),
+                "filter_purple": ("filter_words", "Filter Words"),
+                "filter_orange": ("weak_modifiers", "Weak Modifiers"),
+                "cliche_hit": ("cliches", "Cliches"),
+                "redundancy_hit": ("redundancies", "Redundancies"),
+                "passive_voice_hit": ("passive_voice", "Passive Voice"),
+                "emotion_hit": ("emotion_catcher", "Emotion Catcher"),
+                "dialogue_tag": ("dialogue_tags", "Dialogue Tags"),
+            }
+            matched_tag = None
+            for t in tags:
+                if t in TAG_TO_MODE:
+                    matched_tag = t
+                    break
+            if matched_tag:
+                try:
+                    prev_range = self.text.tag_prevrange(matched_tag, f"{index} + 1c")
+                    if prev_range:
+                        tag_start, tag_end = prev_range
+                        if self.text.compare(index, ">=", tag_start) and self.text.compare(index, "<", tag_end):
+                            text_val = self.text.get(tag_start, tag_end).strip()
+                            if text_val:
+                                mode_key, mode_label = TAG_TO_MODE[matched_tag]
+                                menu = tk.Menu(self.root, tearoff=0, bg=BG_SURFACE, fg=TEXT, activebackground=ACCENT, activeforeground=BG)
+                                menu.add_command(
+                                    label=f"Ignore '{text_val}' in {mode_label}",
+                                    command=lambda m=mode_key, w=text_val: self._ignore_mode_word(m, w)
+                                )
+                                menu.tk_popup(event.x_root, event.y_root)
+                except tk.TclError:
+                    pass
+
+    def _ignore_mode_word(self, mode: str, word: str) -> None:
+        self._mode_ignore_subsystem.add_ignore(mode, word)
+        self._run_active_mode_immediately()
+
+    def _run_active_mode_immediately(self) -> None:
+        if self.filter_active:
+            self._filter_update_needed = False
+            self._run_filter()
+        elif self._weak_mod_active:
+            self._weak_update_needed = False
+            self._run_weak_modifiers()
+        elif getattr(self, "_dialogue_tag_active", False):
+            self._dialogue_tag_update_needed = False
+            self._run_dialogue_tags_mode()
+        elif getattr(self, "_emotion_active", False):
+            self._emotion_update_needed = False
+            self._run_emotion_catcher_mode()
+        elif getattr(self, "_cliche_active", False):
+            self._cliche_update_needed = False
+            self._run_cliche_mode()
+        elif getattr(self, "_redundancy_active", False):
+            self._redundancy_update_needed = False
+            self._run_redundancy_mode()
+        elif getattr(self, "_passive_voice_active", False):
+            self._passive_voice_update_needed = False
+            self._run_passive_voice_mode()
 
     def _add_to_dictionary(self, word: str) -> None:
         self._spellcheck_subsystem.add_to_dictionary(word)
@@ -2551,6 +2626,8 @@ class EditorialApp:
                 return []
             from filter_analyzer import analyze_cliches
             hits = analyze_cliches(content, progress_callback=progress_cb)
+            if hasattr(self, "_mode_ignore_subsystem"):
+                hits = self._mode_ignore_subsystem.filter_hits("cliches", content, hits)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
 
@@ -2593,6 +2670,8 @@ class EditorialApp:
                 return []
             from filter_analyzer import analyze_redundancies
             hits = analyze_redundancies(content, progress_callback=progress_cb)
+            if hasattr(self, "_mode_ignore_subsystem"):
+                hits = self._mode_ignore_subsystem.filter_hits("redundancies", content, hits)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
 
@@ -2635,6 +2714,8 @@ class EditorialApp:
                 return []
             from filter_analyzer import analyze_passive_voice
             hits = analyze_passive_voice(content, progress_callback=progress_cb)
+            if hasattr(self, "_mode_ignore_subsystem"):
+                hits = self._mode_ignore_subsystem.filter_hits("passive_voice", content, hits)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
 
@@ -2676,6 +2757,8 @@ class EditorialApp:
                 progress_cb(100)
                 return []
             hits = analyze_emotion_words(content, progress_callback=progress_cb)
+            if hasattr(self, "_mode_ignore_subsystem"):
+                hits = self._mode_ignore_subsystem.filter_hits("emotion_catcher", content, hits)
             raw_ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, raw_ranges)
 
@@ -2719,6 +2802,8 @@ class EditorialApp:
                 progress_cb(100)
                 return []
             hits = analyze_dialogue_tags(content)
+            if hasattr(self, "_mode_ignore_subsystem"):
+                hits = self._mode_ignore_subsystem.filter_hits("dialogue_tags", content, hits)
             progress_cb(100)
             ranges = [(ws, we) for ws, we, _cls in hits]
             return self._normalize_ranges(content, ranges)
@@ -3351,6 +3436,64 @@ class EditorialApp:
         temp_arch_ignore_dialogue = tk.BooleanVar(value=self._arch_ignore_dialogue_var.get())
         temp_pov_names_list = sorted([name.strip() for name in self._pov_names_var.get().split(",") if name.strip()])
 
+        # Load customizable lists for Mode Lists tab
+        from mode_filter_words import FILTER_LEMMAS
+        from mode_cliches import CLICHES_LIST
+        from mode_redundancies import REDUNDANCIES_LIST
+        from mode_emotion_catcher import EMOTION_WORDS
+
+        temp_mode_lists: dict[str, list[str]] = {
+            "POV Names": list(temp_pov_names_list),
+            "Filter Words": sorted(list(FILTER_LEMMAS)),
+            "Cliches": sorted(list(CLICHES_LIST)),
+            "Redundancies": sorted(list(REDUNDANCIES_LIST)),
+            "Emotion Catcher": sorted(list(EMOTION_WORDS)),
+        }
+
+        # Defaults for Mode Lists tab
+        default_lists: dict[str, list[str]] = {
+            "POV Names": [],
+            "Filter Words": [
+                "see", "look", "hear", "feel", "smell", "taste", "notice", "watch",
+                "observe", "realize", "think", "know", "wonder", "decide", "note"
+            ],
+            "Cliches": [
+                "avoid like the plague", "fit as a fiddle", "at the end of the day",
+                "piece of cake", "barking up the wrong tree", "bite the bullet",
+                "break the ice", "call it a day", "cut corners", "get out of hand",
+                "hang in there", "hit the sack", "let the cat out of the bag",
+                "make a long story short", "miss the boat", "no pain, no gain",
+                "on the ball", "pull someone's leg", "so far so good",
+                "speak of the devil", "that's the last straw", "the best of both worlds",
+                "time flies", "under the weather", "wrap my head around", "elephant in the room",
+                "better late than never", "add insult to injury", "bite off more than you can chew",
+                "burning the midnight oil", "cost an arm and a leg", "cutting edge", "dime a dozen",
+                "don't judge a book by its cover", "every cloud has a silver lining", "ignorance is bliss",
+                "it takes two to tango", "jump on the bandwagon", "leave no stone unturned",
+                "once in a blue moon", "play devil's advocate", "spill the beans", "take with a grain of salt",
+                "the early bird catches the worm", "the writing on the wall", "throw caution to the wind"
+            ],
+            "Redundancies": [
+                "shrugged his shoulders", "nodded her head", "whispered softly", "sudden crisis",
+                "past history", "added bonus", "advance warning", "basic fundamentals",
+                "close proximity", "completely finish", "consensus of opinion", "end result",
+                "exactly identical", "fall down", "final outcome", "first and foremost",
+                "free gift", "future plans", "join together", "kneel down", "major breakthrough",
+                "new beginning", "new innovation", "past experience", "postpone until later",
+                "revert back", "safe haven", "shrugged her shoulders", "nodded his head",
+                "smile on his face", "smile on her face", "stand up", "sit down",
+                "totally unique", "true fact", "unexpected surprise", "unintended mistake",
+                "shook his head", "shook her head"
+            ],
+            "Emotion Catcher": [
+                "angry", "anger", "furious", "irate", "mad", "rage", "enraged",
+                "sad", "sorrow", "depressed", "miserable", "gloomy", "heartbroken",
+                "terrified", "afraid", "fearful", "scared", "panic", "anxious",
+                "happy", "joyful", "glad", "delighted", "elated", "cheerful",
+                "jealous", "envy", "envious", "resentful"
+            ]
+        }
+
         # Configure style for TNotebook to match the dark Catppuccin theme
         style = ttk.Style(self.root)
         style.configure("Settings.TNotebook", background=BG_SURFACE, borderwidth=0)
@@ -3633,16 +3776,9 @@ class EditorialApp:
         )
         chk_arch.pack(anchor="w")
 
-        # ------------------------------------------------------------- Tab 3: POV Settings
-        tab_pov = tk.Frame(notebook, bg=BG_SURFACE)
-        notebook.add(tab_pov, text="POV Settings")
-
-        pov_panel = tk.Frame(tab_pov, bg=BG_SURFACE, padx=12, pady=12)
-        pov_panel.pack(fill=tk.BOTH, expand=True)
-
-        # POV Pronoun Filter Settings (moved from Tab 2)
-        sec_pov = tk.Frame(pov_panel, bg=BG_SURFACE, pady=6)
-        sec_pov.pack(fill=tk.X, pady=(0, 10))
+        # Filter Words POV Setting
+        sec_pov = tk.Frame(modes_container, bg=BG_SURFACE, pady=6)
+        sec_pov.pack(fill=tk.X)
         tk.Label(
             sec_pov,
             text="Filter Words: POV Setting",
@@ -3660,29 +3796,65 @@ class EditorialApp:
         )
         combo_pov.pack(anchor="w", pady=(4, 0))
 
-        # POV Character Names List (matching Spelling design)
-        lbl_names = tk.Label(
-            pov_panel,
-            text="POV Character Names:",
+        # ------------------------------------------------------------- Tab 3: Mode Lists
+        tab_lists = tk.Frame(notebook, bg=BG_SURFACE)
+        notebook.add(tab_lists, text="Mode Lists")
+
+        lists_panel = tk.Frame(tab_lists, bg=BG_SURFACE, padx=12, pady=12)
+        lists_panel.pack(fill=tk.BOTH, expand=True)
+
+        sec_list_select = tk.Frame(lists_panel, bg=BG_SURFACE, pady=6)
+        sec_list_select.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(
+            sec_list_select,
+            text="Select List to Manage:",
+            bg=BG_SURFACE,
+            fg=ACCENT,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X)
+
+        list_options = [
+            "POV Names",
+            "Filter Words",
+            "Cliches",
+            "Redundancies",
+            "Emotion Catcher",
+        ]
+
+        selected_list_label = tk.StringVar(value="POV Names")
+
+        combo_list = ttk.Combobox(
+            sec_list_select,
+            state="readonly",
+            values=list_options,
+            textvariable=selected_list_label,
+            width=28,
+        )
+        combo_list.pack(anchor="w", pady=(4, 0))
+
+        lbl_list_items = tk.Label(
+            lists_panel,
+            text="List Items:",
             bg=BG_SURFACE,
             fg=TEXT_SUBTLE,
             font=("Segoe UI", 9, "bold"),
             anchor="w",
         )
-        lbl_names.pack(fill=tk.X, pady=(0, 4))
+        lbl_list_items.pack(fill=tk.X, pady=(0, 4))
 
-        names_container = tk.Frame(pov_panel, bg=BG_SURFACE)
-        names_container.pack(fill=tk.BOTH, expand=True)
+        lists_container = tk.Frame(lists_panel, bg=BG_SURFACE)
+        lists_container.pack(fill=tk.BOTH, expand=True)
 
-        names_list_frame = tk.Frame(names_container, bg=BG)
-        names_list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        list_items_frame = tk.Frame(lists_container, bg=BG)
+        list_items_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        names_scrollbar = tk.Scrollbar(
-            names_list_frame, bg=BG_SURFACE, troughcolor=BG,
+        lists_scrollbar = tk.Scrollbar(
+            list_items_frame, bg=BG_SURFACE, troughcolor=BG,
             activebackground=ACCENT, width=12, relief="flat", bd=0,
         )
-        names_listbox = tk.Listbox(
-            names_list_frame,
+        lists_listbox = tk.Listbox(
+            list_items_frame,
             bg=BG,
             fg=TEXT,
             selectbackground=BG_OVERLAY,
@@ -3692,36 +3864,39 @@ class EditorialApp:
             relief="flat",
             bd=0,
             font=("Segoe UI", 9),
-            yscrollcommand=names_scrollbar.set,
+            yscrollcommand=lists_scrollbar.set,
             width=28,
             height=8,
         )
-        names_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        names_scrollbar.config(command=names_listbox.yview)
-        names_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        lists_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        lists_scrollbar.config(command=lists_listbox.yview)
+        lists_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        def update_names_listbox():
-            names_listbox.delete(0, tk.END)
-            for name in temp_pov_names_list:
-                names_listbox.insert(tk.END, name)
+        def update_lists_listbox():
+            lists_listbox.delete(0, tk.END)
+            key = selected_list_label.get()
+            for item in temp_mode_lists[key]:
+                lists_listbox.insert(tk.END, item)
 
-        update_names_listbox()
+        update_lists_listbox()
 
-        names_actions_frame = tk.Frame(names_container, bg=BG_SURFACE, padx=10)
-        names_actions_frame.pack(side=tk.LEFT, fill=tk.Y)
+        combo_list.bind("<<ComboboxSelected>>", lambda _e: update_lists_listbox())
 
-        lbl_new_name = tk.Label(
-            names_actions_frame,
-            text="New Name:",
+        lists_actions_frame = tk.Frame(lists_container, bg=BG_SURFACE, padx=10)
+        lists_actions_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        lbl_new_item = tk.Label(
+            lists_actions_frame,
+            text="New Word/Phrase:",
             bg=BG_SURFACE,
             fg=TEXT_SUBTLE,
             font=("Segoe UI", 9),
             anchor="w",
         )
-        lbl_new_name.pack(fill=tk.X, pady=(0, 2))
+        lbl_new_item.pack(fill=tk.X, pady=(0, 2))
 
-        add_name_entry = tk.Entry(
-            names_actions_frame,
+        add_item_entry = tk.Entry(
+            lists_actions_frame,
             bg=BG,
             fg=TEXT,
             insertbackground=ACCENT,
@@ -3729,29 +3904,30 @@ class EditorialApp:
             font=("Segoe UI", 9),
             width=18,
         )
-        add_name_entry.pack(fill=tk.X, pady=(0, 8))
+        add_item_entry.pack(fill=tk.X, pady=(0, 8))
 
-        def add_name_action():
-            name = add_name_entry.get().strip()
-            if not name:
+        def add_item_action():
+            item = add_item_entry.get().strip()
+            if not item:
                 return
-            if "," in name:
+            key = selected_list_label.get()
+            if key == "POV Names" and "," in item:
                 messagebox.showerror("Invalid Name", "POV names cannot contain commas.", parent=dlg)
                 return
-            if name.lower() in [n.lower() for n in temp_pov_names_list]:
-                messagebox.showinfo("Duplicate Name", f"'{name}' is already in the POV names list.", parent=dlg)
+            if item.lower() in [i.lower() for i in temp_mode_lists[key]]:
+                messagebox.showinfo("Duplicate Item", f"'{item}' is already in this list.", parent=dlg)
                 return
-            temp_pov_names_list.append(name)
-            temp_pov_names_list.sort(key=lambda n: n.lower())
-            update_names_listbox()
-            add_name_entry.delete(0, tk.END)
+            temp_mode_lists[key].append(item)
+            temp_mode_lists[key].sort(key=lambda x: x.lower())
+            update_lists_listbox()
+            add_item_entry.delete(0, tk.END)
 
-        add_name_entry.bind("<Return>", lambda _e: add_name_action())
+        add_item_entry.bind("<Return>", lambda _e: add_item_action())
 
-        btn_add_name = tk.Button(
-            names_actions_frame,
-            text="Add Name",
-            command=add_name_action,
+        btn_add_item = tk.Button(
+            lists_actions_frame,
+            text="Add Item",
+            command=add_item_action,
             bg=BG_OVERLAY,
             fg=TEXT,
             activebackground=ACCENT,
@@ -3763,27 +3939,28 @@ class EditorialApp:
             cursor="hand2",
             font=("Segoe UI", 9, "bold"),
         )
-        btn_add_name.pack(fill=tk.X, pady=(0, 10))
+        btn_add_item.pack(fill=tk.X, pady=(0, 10))
 
-        def remove_name_action():
-            selected = names_listbox.curselection()
+        def remove_item_action():
+            selected = lists_listbox.curselection()
             if not selected:
                 return
             index = selected[0]
-            name = names_listbox.get(index)
-            if name in temp_pov_names_list:
-                temp_pov_names_list.remove(name)
-                update_names_listbox()
-                new_size = len(temp_pov_names_list)
+            item = lists_listbox.get(index)
+            key = selected_list_label.get()
+            if item in temp_mode_lists[key]:
+                temp_mode_lists[key].remove(item)
+                update_lists_listbox()
+                new_size = len(temp_mode_lists[key])
                 if new_size > 0:
                     new_idx = min(index, new_size - 1)
-                    names_listbox.select_set(new_idx)
-                    names_listbox.activate(new_idx)
+                    lists_listbox.select_set(new_idx)
+                    lists_listbox.activate(new_idx)
 
-        btn_remove_name = tk.Button(
-            names_actions_frame,
+        btn_remove_item = tk.Button(
+            lists_actions_frame,
             text="Remove Selected",
-            command=remove_name_action,
+            command=remove_item_action,
             bg=BG_OVERLAY,
             fg=TEXT,
             activebackground=ACCENT,
@@ -3795,7 +3972,37 @@ class EditorialApp:
             cursor="hand2",
             font=("Segoe UI", 9),
         )
-        btn_remove_name.pack(fill=tk.X)
+        btn_remove_item.pack(fill=tk.X)
+
+        def reset_list_action():
+            key = selected_list_label.get()
+            confirm = messagebox.askokcancel(
+                "Reset List to Defaults",
+                f"Are you sure you want to reset the '{key}' list to defaults?\nAll your custom changes to this list will be lost.",
+                parent=dlg,
+                icon=messagebox.WARNING
+            )
+            if not confirm:
+                return
+            temp_mode_lists[key] = sorted(list(default_lists[key]))
+            update_lists_listbox()
+
+        btn_reset_list = tk.Button(
+            lists_actions_frame,
+            text="Reset to Defaults",
+            command=reset_list_action,
+            bg=BG_OVERLAY,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            font=("Segoe UI", 9),
+        )
+        btn_reset_list.pack(fill=tk.X, pady=(15, 0))
 
         # ------------------------------------------------------------- Dialog Action Buttons (Save/Cancel)
         btn_row = tk.Frame(dlg, bg=BG_SURFACE, padx=10, pady=0)
@@ -3849,7 +4056,34 @@ class EditorialApp:
             self._on_arch_ignore_dialogue_changed()
 
             # 6. Apply POV names
-            self._pov_names_var.set(", ".join(temp_pov_names_list))
+            self._pov_names_var.set(", ".join(sorted(temp_mode_lists["POV Names"])))
+
+            # Helper to save items to txt files
+            def save_list_file(filename: str, items: list[str]) -> None:
+                from analysis_utils import _get_base_dir
+                path = os.path.join(_get_base_dir(), filename)
+                with open(path, "w", encoding="utf-8") as fh:
+                    for item in items:
+                        fh.write(f"{item}\n")
+
+            # 7. Apply and save customizable lists
+            save_list_file("filter_words.txt", temp_mode_lists["Filter Words"])
+            from mode_filter_words import reload_filter_words
+            reload_filter_words()
+
+            save_list_file("cliches.txt", temp_mode_lists["Cliches"])
+            from mode_cliches import reload_cliches
+            reload_cliches()
+
+            save_list_file("redundancies.txt", temp_mode_lists["Redundancies"])
+            from mode_redundancies import reload_redundancies
+            reload_redundancies()
+
+            save_list_file("emotions.txt", temp_mode_lists["Emotion Catcher"])
+            from mode_emotion_catcher import reload_emotion_words
+            reload_emotion_words()
+
+            self._run_active_mode_immediately()
 
             # Save to configuration JSON
             self._save_user_settings()
